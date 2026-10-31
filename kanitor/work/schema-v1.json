@@ -1,0 +1,702 @@
+{
+  "schema_version": 1,
+  "operations": {
+    "work_capabilities": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "work_begin": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "provider",
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "label",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_transition": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "session_id",
+        "label",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_span_begin": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "parent_span_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "session_id",
+        "label",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_span_end": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "span_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {},
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "span_id",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_span_record": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "parent_span_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reported_start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reported_end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "measured_duration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "clock": {
+          "type": "object"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {},
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "session_id",
+        "label",
+        "reported_start",
+        "reported_end",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_note": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "span_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "session_id",
+        "text",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_end": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {},
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "session_id",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_amend": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "session",
+                "span",
+                "phase",
+                "note",
+                "event"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "correction": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "metadata": {
+              "type": "object"
+            },
+            "subject": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "ref": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "ref"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {},
+            "started_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "ended_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "measured_duration_ms": {
+              "type": "number",
+              "minimum": 0
+            },
+            "state": {
+              "const": "interrupted"
+            }
+          },
+          "required": [],
+          "additionalProperties": false,
+          "minProperties": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "target",
+        "expected_revision",
+        "correction",
+        "reason",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_read": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "subject": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "provider",
+            "ref"
+          ],
+          "additionalProperties": false
+        },
+        "view": {
+          "enum": [
+            "events",
+            "sessions"
+          ]
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "as_of_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "work_recover": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "reason",
+        "request_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "configuration": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "metadataSchemas": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": [
+              "object",
+              "boolean"
+            ]
+          },
+          "phase": {
+            "type": [
+              "object",
+              "boolean"
+            ]
+          },
+          "span": {
+            "type": [
+              "object",
+              "boolean"
+            ]
+          },
+          "note": {
+            "type": [
+              "object",
+              "boolean"
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outcomes": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requiresEvidence": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "sessionColumns": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "field": {
+              "enum": [
+                "id",
+                "label",
+                "state",
+                "started_at",
+                "ended_at",
+                "last_event_at",
+                "subject",
+                "outcome",
+                "confirmed_session_elapsed_ms",
+                "confirmed_phase_ms",
+                "confirmed_unclassified_ms"
+              ]
+            },
+            "metadata": {
+              "type": "string",
+              "minLength": 1
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 4
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[ \\t]*(?:(?:hug|fill)|[1-9][0-9]*[ \\t]*,[ \\t]*(?:hug|fill)|(?:hug|fill)[ \\t]*,[ \\t]*[1-9][0-9]*|[1-9][0-9]*[ \\t]*,[ \\t]*(?:hug|fill)[ \\t]*,[ \\t]*[1-9][0-9]*)[ \\t]*$(?!\\n)"
+                }
+              ]
+            },
+            "minTerminalWidth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "filterable": {
+              "type": "boolean"
+            },
+            "format": {
+              "type": "string"
+            },
+            "sortable": {
+              "type": "boolean"
+            },
+            "filterType": {
+              "enum": [
+                "enum",
+                "string",
+                "date"
+              ]
+            },
+            "thresholds": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "under": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "format": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "under",
+                  "format"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "field"
+              ],
+              "not": {
+                "required": [
+                  "metadata"
+                ]
+              }
+            },
+            {
+              "required": [
+                "metadata"
+              ],
+              "not": {
+                "required": [
+                  "field"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "event": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schema_version": {
+        "const": 1
+      },
+      "event_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "seq": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "session_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "type": {
+        "enum": [
+          "session.begun",
+          "phase.transitioned",
+          "span.begun",
+          "span.ended",
+          "span.recorded",
+          "note.added",
+          "session.ended",
+          "work.amended"
+        ]
+      },
+      "recorded_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "request": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "enum": [
+              "work_capabilities",
+              "work_begin",
+              "work_transition",
+              "work_span_begin",
+              "work_span_end",
+              "work_span_record",
+              "work_note",
+              "work_end",
+              "work_amend",
+              "work_read",
+              "work_recover"
+            ]
+          },
+          "arguments": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation",
+          "arguments"
+        ],
+        "additionalProperties": false
+      },
+      "payload": {
+        "type": "object"
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "receipt": {
+        "type": "object"
+      },
+      "previous_hash": {
+        "type": "string"
+      },
+      "hash": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "schema_version",
+      "event_id",
+      "seq",
+      "session_id",
+      "type",
+      "recorded_at",
+      "request_id",
+      "request",
+      "payload",
+      "revision",
+      "receipt",
+      "previous_hash",
+      "hash"
+    ],
+    "additionalProperties": false
+  }
+}

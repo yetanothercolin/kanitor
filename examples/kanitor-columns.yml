@@ -1,0 +1,23 @@
+boardColumns:
+  - {title: Board, field: board, width: fill}
+  - {title: Task Status, field: task_squares, width: fill}
+  - {title: Cards, field: cards, width: hug}
+  - {title: Active, field: active, width: hug}
+  - {title: Remaining, field: remaining, width: hug}
+columns:
+  - {title: Status, field: status, width: hug}
+  - title: Updated
+    metadata: updated
+    width: hug
+    format: "%b %Y"
+    thresholds:
+      - {under: 1d, format: "%H:%M"}
+      - {under: 1y, format: "%d %b"}
+  - {title: Assignee, metadata: assignee, width: hug, filterable: true}
+  - {title: Task, field: task, width: fill}
+boards:
+  releases:
+    columns:
+      - {title: Release, field: task, width: fill}
+      - {title: Reviewer, metadata: reviewer, width: hug, filterable: true}
+      - {title: "", field: status, width: hug}

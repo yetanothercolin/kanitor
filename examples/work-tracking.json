@@ -1,0 +1,54 @@
+{
+  "workTracking": {
+    "metadataSchemas": {
+      "session": {
+        "type": "object",
+        "properties": {
+          "AGENT": {
+            "type": "string",
+            "minLength": 1
+          },
+          "SCOPE": {
+            "enum": [
+              "polish",
+              "local-behavior",
+              "integrated-behavior",
+              "research"
+            ]
+          },
+          "FRAMEWORK": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "AGENT"
+        ],
+        "additionalProperties": true
+      },
+      "phase": {
+        "type": "object",
+        "properties": {
+          "ACTIVITY": {
+            "enum": [
+              "investigating",
+              "changing",
+              "building",
+              "verifying",
+              "reporting"
+            ]
+          }
+        },
+        "required": [
+          "ACTIVITY"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "outcomes": {
+      "verified": {
+        "label": "Producer reports verification",
+        "requiresEvidence": true
+      }
+    }
+  }
+}

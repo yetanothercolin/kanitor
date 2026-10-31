@@ -1,0 +1,17 @@
+{
+  "projects": [
+    "api",
+    "web",
+    "tools/worker"
+  ],
+  "projectColumns": [
+    {"title": "Project", "field": "project", "width": 18},
+    {"title": "Task Status", "field": "task_squares", "width": "fill"},
+    {"title": "State", "field": "state", "width": "hug"}
+  ],
+  "taskSquares": {
+    "recentCompleted": "1d",
+    "recentWork": "15m",
+    "recentCreated": "1d"
+  }
+}

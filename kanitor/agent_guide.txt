@@ -1,0 +1,612 @@
+KANITOR AGENT GUIDE
+
+Alpha / preview: tested on macOS with Python 3.14. Python 3.11-3.13 and Linux
+may work but have not been tested. Package metadata permits Python 3.11+.
+
+Kanitor is a read-only terminal explorer for kanbn. It reads native boards,
+cards, metadata, checklists, relations, comments, and history. Use kanbn for
+card/board edits; Kanitor never moves cards or changes their metadata.
+
+DISCOVERY AND INSPECTION
+
+  kanitor --help
+  kanitor --version
+  kanitor --once
+  kanitor --json
+  kanitor --root /path/to/workspace --board index
+  kanitor --root /path/to/parent --project api
+
+Without --root, Kanitor finds the nearest parent containing .kanbn/, kanbn.json,
+kanbn.yml, a supported Kanitor config, or a work log. Run from the intended
+project. --once prints a text summary;
+--json prints the full native snapshot, including metadata and customization.
+These commands return status 1 on read/configuration failure. --agent-guide
+works without a workspace, an interactive terminal, Node.js, or kanbn.
+
+CONFIGURATION FILES AND INITIALIZATION
+
+Editable tool installations follow source changes but have a separate dependency
+environment. After dependency changes, run uv tool install --reinstall --editable .
+from the checkout (use '.[mcp]' instead of . to retain MCP support). uv sync only
+updates the checkout's uv run environment, not the installed tool environment.
+
+Supported files: .kanitor.json, .kanitor.yml, .kanitor.yaml, in that precedence
+order. Only the first existing file is used; files are never merged. YAML uses
+the same keys and validation as the JSON examples in this guide, across all
+views and work recording. Projects without a local config inherit their declaring
+workspace's settings; an explicit local file replaces that fallback entirely.
+Edits, creation, deletion, and switching formats reload live. Invalid rules
+report the selected filename and preserve the last good viewer snapshot.
+
+  kanitor --init-yml
+  kanitor --init-yml --root /path/to/workspace
+
+Initialization creates .kanitor.yml in the current directory or explicit --root,
+without discovering a parent workspace. No Node, kanbn, or terminal is required.
+It refuses to write if any supported config already exists and never converts
+or overwrites settings. The file contains built-in task/board/project
+layouts, recency windows, empty work rules, and commented examples for projects,
+custom columns, filters, date thresholds, board overrides, and work validation.
+Projects is commented out so initialization keeps standalone behavior.
+When adapting examples, replace the matching section instead of duplicating keys.
+Preserve existing customizations when switching formats; remove/rename JSON
+only after carrying them over, because it takes precedence over YAML.
+YAML supports comments and anchors; quote strftime formats, date-like strings,
+and numeric/boolean metadata keys. Empty YAML uses defaults.
+Name fields have consistent meanings: project is the project directory basename
+in Projects/Activity, board is the board display name in Boards/Activity, and
+task is the task title in Tasks/Activity. Use these explicit fields in new rules.
+Legacy name remains an alias for project in Projects, board in Boards, and task
+in Tasks/Activity. Switching to the explicit field preserves filters, sort and
+cell focus. YAML column anchors can be reused directly across these views.
+Column rules accept minTerminalWidth (nonnegative integer, default 0), hiding
+the column on narrower terminals in task, board, and project views.
+
+WATCH MULTIPLE PROJECTS
+
+A parent directory's .kanitor.json can declare an ordered projects array:
+  {"projects": ["api", "web", "tools/worker"]}
+Run Kanitor in that directory or pass --root to it. No parent kanbn board is
+needed. The main pane starts at Projects; Enter/Space opens a project,
+then its boards, tasks, and details. Escape from a project's board list
+returns to Projects. The clickable "‹ Projects" link also returns to Projects.
+Standard list, wheel, scrollbar, and modified
+arrow navigation also applies to Projects.
+
+Each project uses its own kanbn configuration and work log. If all supported local
+Kanitor config files are missing, use the nearest ancestor workspace explicitly
+listing that project in projects. Inherit columns, board overrides, date/filter
+rules, square recency, and work settings; never inherit the parent's project roster.
+Board task columns fall back to effective global columns when no board override
+exists. Explicit local config replaces inheritance as a whole, including an empty
+{} config (built-in defaults); missing keys do not merge with the parent. Invalid
+local config is an error. Parent edits and local config creation/deletion reload
+live. Direct child launches and work recording use the same fallback. Unlisted
+directories do not inherit. Only readable ancestor declarations are considered;
+unreadable/unrelated ancestors are skipped. Without an applicable declaration,
+built-in defaults apply. Local file errors and invalid rules in an applicable
+readable ancestor remain errors. Do not copy parent settings into child files merely
+to enable inheritance. Per-project view
+state is retained independently. Background readers watch inactive projects;
+errors are local to the affected project. Changes to parent projects and child
+settings reload live. Invalid parent config retains the previous project list.
+Removing the active project returns to Projects and cancels its readers.
+
+Project paths are explicit, relative descendant directories, in display order.
+Nested paths are supported; globs are not expanded. Absolute paths, .., ., and
+duplicates (including symlink aliases) are invalid; symlinks must remain under
+the parent. This adds one hierarchy layer: child project lists are not traversed
+recursively. An empty projects array shows an empty list; omitting projects
+preserves standalone behavior. The parent's own boards are not implicitly listed.
+
+--project PATH opens a declared project directly; combine it with --board or
+--search. --board/--search require --project at a Projects root. --once/--json at
+the parent produce per-project native snapshots, including individual errors,
+and exit 1 if any project failed. A project needs kanbn data for browsing; work
+logs alone do not provide views. Starting inside a child discovers that child.
+For recording or MCP, workspace must be the actual project's absolute root,
+so records link to that project's task IDs.
+
+Arrow keys navigate table cells and rows; Up on the first row selects that
+column's header. All headers are selectable, even without enabled actions.
+Enter/Space opens the focused row, square, or header menu. Left/Right never
+opens a row or menu; Left clamps at the first cell. Escape goes back.
+Tab/Shift+Tab switches pane focus when Activity is visible. Click another row to focus its cell;
+click a cell in the focused row to open it. Right-click/f opens a column menu
+with raw-value Only/Exclude actions on filterable cells. / searches task data;
+s opens the Status checkbox filter. Details also retain Left to go back.
+Wheel scrolling pauses at the first data row, swallowing the rest of that
+gesture before headers. A fresh upward gesture after 200 ms quiet reaches the
+header. Opposite wheel direction responds immediately.
+p toggles a non-interactive description preview beneath the task list. It has
+a fixed height of eight rows including borders, and follows the selected task.
+Long descriptions wrap and clip with an ellipsis; open the card to read all.
+The preview is hidden automatically below 19 terminal rows and returns when
+the terminal is tall enough. It accepts no clicks, wheel input, or focus.
+Shift+Up/Down jumps ten items/lines; Ctrl+Shift+Up/Down jumps one visible page.
+Shift+Left/Right moves one cell, or five squares within Task Squares.
+Overflowing views have scrollbars. Kanitor polls files about every 0.5 seconds;
+r refreshes immediately. Errors mark the last good snapshot STALE.
+
+ACTIVITY PANE
+
+The task-focused Activity pane is toggled by a (toggleActivity). Tab/Shift+Tab
+(focusPane) switches between it and the main table while shown. It lists native
+in-progress tickets from all declared projects in Projects, all project boards
+in Boards, and only the current board in Tasks. Main filters/search do not hide
+activity tickets. Shared tasks appear once per project; IDs preserve selection.
+Project and board columns provide context, with project hidden outside Projects
+and board hidden in Tasks. Default fields include elapsed, current activity,
+ticket assignment on wide screens, and the ticket name.
+
+Elapsed is the live age of the latest open kanitor work session linked to the
+exact task ID in that project's log. Never substitute native started/status age,
+add earlier sessions, or infer a running session from a closed/interrupted one.
+The current phase label is shown, falling back to the session label. No open
+session: elapsed is unknown and activity says No open session. Failed work reads
+mark data stale and suppress live counters. The UI never writes timing/events.
+
+Up/Down, ten-item/page jumps, Home/End, wheel and scrollbar navigate tickets.
+Left/Right selects cells; Up from the first row selects that column's header.
+The focused ticket drives the existing eight-row task preview. Enter/Space or
+double-click on Project or Board navigates there; on task name/description/ID
+opens its exact task page, preserving browsing context on return. Enter on
+Assigned or another filterable value applies Only this value to Activity.
+Header Enter/click and f/right-click open contextual filter/sort menus, including
+Only/Exclude and the shared enum, string and date editors. Activity filters and
+sorting are independent of the main table and reset when view/board scope changes.
+Escape returns focus to the main table; p toggles that preview. Activity has up
+to eight rows and shrinks for short terminals. With Activity, previews need
+25 terminal rows; the ordinary terminal minimum remains 60x16.
+
+activityColumns is a top-level replacement array of column rules. Fields:
+project, board, slug, id, task, description, status, assigned, activity, session (label),
+started_at (session start), elapsed. Or use metadata for an exact ticket key.
+Standard empty titles, widths/constraints, minTerminalWidth and date formats
+work; elapsed uses aligned duration slots. Filter/sort default on except elapsed
+supports sorting only. Use filterable/sortable false to disable, and filterType
+to override enum/string/date inference. Never enable elapsed filtering.
+board shows the board name; slug shows its native slug. Both navigate to that
+board and appear in Projects/Boards, hidden in Tasks. A boardColumns slug rule
+can be reused in activityColumns with a YAML alias. Explicit project/board/task
+name rules can also be shared directly between their tables and Activity.
+Example:
+  activityColumns:
+    - {title: Project, field: project, width: "hug,18"}
+    - {title: Board, field: board, width: "hug,18"}
+    - {title: Elapsed, field: elapsed, width: hug}
+    - {title: Task, field: task, width: fill}
+Workspace configuration governs Projects; child effective configuration governs
+its pane. --init-yml emits default columns and binding examples. Existing task,
+board and project column settings remain independent.
+
+CONFIGURE KEY BINDINGS
+
+The navigation keys described above are defaults. Set top-level keybindings
+in JSON/YAML to replace keys per action; omit an action for built-in defaults,
+use a single string or array, or [] to disable it. Example:
+
+  keybindings:
+    left: [left, h]
+    right: [right, l]
+    open: [enter, space, o]
+    help: [F1, "?"]
+    quit: [Q]
+    refresh: []
+
+Actions (case-sensitive): up, down, left, right, open, back, first, last,
+jumpUp, jumpDown, jumpLeft, jumpRight, pageUp, pageDown, columnMenu, statusFilter,
+togglePreview, toggleActivity, focusPane, previousBoard, nextBoard, search, refresh, help, quit. Defaults are arrows +
+k/j for vertical movement, Enter/Space open, Escape back, Home/End first/last,
+Shift+Up/Down jump ten, Shift+Left/Right jump horizontally, PageUp/Down or
+Ctrl+Shift+Up/Down page, f columnMenu, s statusFilter, p togglePreview,
+[ previousBoard, ]/b nextBoard, / search,
+r refresh, a toggleActivity, Tab/Shift+Tab focusPane, ? help, q quit.
+--init-yml emits the complete defaults.
+
+Named keys are case-insensitive; literal characters preserve case. Supported:
+arrows, home/end, pageup/pagedown, enter/escape/space, tab/shift+tab,
+backspace/delete/insert, F1-F24, Ctrl+letter, Shift+letter, and Shift/Ctrl/
+Ctrl+Shift with navigation keys. Aliases: esc, return, pgup, pgdn, backtab.
+Alt combinations and multi-key sequences are unsupported. Modified navigation
+requires terminal support. Ctrl+J/Ctrl+M alias Enter, Ctrl+I aliases Tab,
+Ctrl+H aliases Backspace, Ctrl+[ aliases Escape. Conflicting assignments,
+including aliases, are errors. Replace/disable the old owner's assignment too:
+back: [b] requires nextBoard: ["]"] to free b. Omitted keys are not appended.
+
+Bindings reload live, retain the last good settings on error, and use project
+configuration/inheritance. Workspace bindings govern Projects; child effective
+bindings govern its tables, squares, menus and details. A local file replaces
+inheritance entirely; unspecified actions in it use built-in defaults.
+Help and footer hints display effective bindings. Tab/Shift+Tab switch Activity
+focus while it is shown. Rebind focusPane (for example to F6), or set it to []
+before assigning Tab to a different action.
+
+jumpLeft/jumpRight move one table cell, including headers, except within Task
+Squares where they move five squares across wrapping. Clamp to the first/last
+square; a further jump at that edge enters the adjacent cell. They are
+configurable actions, defaulting to Shift+Left and Shift+Right.
+
+Printable keys in search/string/date editors remain literal, even if bound to
+an action. Editing controls stay fixed: Enter apply, Escape cancel, Backspace
+delete, Ctrl+U clear, Up/Down switch Between date fields. Left uses its binding
+to close details. Space pages details/help while bound to Open; use pageDown
+to configure other scrolling keys. Mouse behavior is independent of bindings.
+
+CONFIGURE TASK COLUMNS
+
+Create or edit .kanitor.json, .kanitor.yml, or .kanitor.yaml in the workspace root (alongside .kanbn/ or the
+native kanbn config). This file controls display only. It does not rename or
+create metadata on tickets. Do not edit kanbn's native workflow columns just
+to customize Kanitor's table.
+
+Example: replace the default Assigned column with the project's assignee key:
+
+{
+  "columns": [
+    {"title": "Status", "field": "status", "width": "hug"},
+    {"title": "Updated", "metadata": "updated", "width": "hug", "format": "%Y-%m-%d %H:%M"},
+    {"title": "Assignee", "metadata": "assignee", "width": "hug", "filterable": true},
+    {"title": "Task", "field": "task", "width": "fill"}
+  ]
+}
+
+The columns array replaces the entire default task-table layout, in order.
+Column settings:
+
+  title     A printable column heading; spelling/case are preserved. An empty
+            string is allowed and leaves the column unlabeled.
+  field     One of status, task, id, description; OR
+  metadata  An exact metadata key from the card. Use exactly one of these two.
+  width     Integer >= 4 for a fixed width in terminal cells, "hug" to fit the
+            heading and all matching rows, or "fill" to share remaining space
+            equally with other fill columns. Omitted width means "fill".
+            Hug widths stay stable while scrolling and update when filters or
+            card data change. Hug headers fit their visible filter icon; the
+            active-filter marker takes space only while filtered. On small
+            terminals widths shrink toward readable floors before rightmost
+            columns are hidden with notice. Bounds are supported as quoted
+            strings: "fill,8" (maximum 8), "8,fill" (preferred minimum 8),
+            "hug,8" (maximum 8), "8,hug" (preferred minimum 8), "2,hug,8"
+            or "2,fill,8" (both bounds). Bounds are positive integer cells;
+            minimum must not exceed maximum. Whitespace around tokens is OK.
+            In YAML flow mappings, always quote values containing commas.
+            Use width, not size. Fill columns aim for equal final widths:
+            20 cells gives 10/10 for "8,fill" + "fill", or 8/12 for
+            "fill,8" + "fill". Hug/fixed targets fit first, reserving fill
+            minimums. Caps stay strict; surplus goes to other fill columns or
+            stays empty. Minimums soften proportionately under pressure.
+            Readability floors: hug 1, fill/fixed 4;
+            explicitly smaller bounds lower those floors as needed. Headers
+            and values clip at caps; Task Squares wrap. Rounding favors earlier
+            columns. Applies to all table scopes and inherited/board rules.
+  filterable Optional boolean, on task/board/project scalar columns.
+             Task defaults: Status enum, Updated date, Assigned enum,
+             Description text across name and body. Other scalars default false,
+             except computed board updated. false disables filtering.
+  sortable   Optional boolean. Defaults true for task Updated/Assigned and
+             computed board updated; otherwise false. Sort does not move tasks.
+  filterType Optional enum|string|date. Inferred date for formatted date/updated
+             columns, string for task/description and primary names, enum for other values.
+  format     Optional strftime date format, e.g. "%Y-%m-%d %H:%M". Enables
+             date display for ISO date/timestamp strings in any source column.
+  thresholds Optional array of {"under": "1d", "format": "%H:%M"} age rules.
+             See DATE FORMATTING below. Width, capabilities, format, and thresholds
+             are optional; only title and exactly one source are required.
+
+status reads the card's native board column. task is the task title;
+description is the full description. Metadata keys are exact and case-sensitive,
+including spaces and literal dots; they are not nested paths. Inspect --json
+to confirm the real key: assigned and assignee are different fields.
+
+Missing, null, or empty-string values display as an em dash. Numbers and
+booleans are preserved; arrays/objects display as JSON. Values are clipped to
+their column width. Full data remains available in card details and --json.
+
+Defaults are STATUS (native status), UPDATED (metadata.updated, width 16,
+format "%Y-%m-%d %H:%M"), ASSIGNED (metadata.assigned, shown on terminals >= 90
+columns), and DESCRIPTION (task name). Without .kanitor.json,
+Kanitor uses these defaults. No particular column is required: status/name may be
+omitted from a custom layout. s still opens status filtering when status is
+hidden. Renamed/reordered status columns keep their checkbox filter.
+
+DATE FORMATTING
+
+Add this rule after Status in a columns array for age-dependent date display:
+
+{
+  "title": "Updated",
+  "metadata": "updated",
+  "width": "hug",
+  "format": "%b %Y",
+  "thresholds": [
+    {"under": "1d", "format": "%H:%M"},
+    {"under": "1y", "format": "%d %b"}
+  ]
+}
+
+This shows 15:33 below 24 hours old, 22 Oct below 365 days old, and Oct 2025
+for older dates. Formats use Python strftime directives: %Y year, %m month
+number, %d day, %b abbreviated month name, %H 24-hour hour, %M minute, %S second.
+Month names follow the locale. Thresholds must be strictly increasing positive
+durations. Units: s seconds, m minutes, h hours, d days (24h), w weeks (7d),
+y years (365d). Ages measure elapsed time, including across DST changes.
+The first strictly-under threshold matches; equality moves to the next rule.
+Older and future dates use the base format, defaulting to "%Y-%m-%d %H:%M"
+when format is omitted. An empty thresholds array is allowed.
+
+ISO timestamps with Z or offsets convert to local time; offsetless dates use
+local time. Missing/null/empty values show an em dash; invalid date values
+retain their original text/JSON. Dates are not guessed in ordinary columns:
+specify format or thresholds to enable date display. Formatting preserves raw
+filter identities and native details/JSON. Displays update as time passes.
+
+CUSTOM COLUMN FILTERS
+
+Task, board, and project scalar columns support filterable/sortable and optional
+filterType. Click a header or select it with arrows then Enter/Space for Filter,
+Clear filter, ascending/descending sort, and Reset sort as enabled. f/right-click
+on a cell adds Only this value / Exclude this value, replacing its predicate.
+Only active filters display the adjacent ▾ marker; ↑/↓ marks the active sort.
+An empty title remains selectable; the menu uses the source as its label.
+
+Enum options come from all rows before filtering/search, compare raw typed values,
+and combine with OR. Missing/null/empty share (Missing); objects/arrays match as
+whole JSON. Filters across columns and global / search combine with AND. An enum
+subset excludes new values; Exclude remains a predicate admitting new other values.
+String filters use case-insensitive substring search; task name also searches the
+full description. Enter commits a text/date draft; Escape discards it.
+
+Date filters: Today, Yesterday, Last 7 days, Last 30 days, On, Before, After,
+Between. Custom input is YYYY-MM-DD with inline validation. All use local calendar
+days/DST boundaries. Last 7 includes today plus six preceding days; Before/After
+exclude the named day; Between includes both end days. Relative dates refresh at
+midnight. Invalid/missing dates do not match date predicates.
+
+One runtime sort per table. Date values compare chronologically, numbers
+numerically, strings case-insensitively, JSON deterministically; missing/invalid
+dates stay last ascending or descending. Ties retain native order. Reset restores
+native tasks, declared projects, or boards by updated descending. Computed board
+updated is max(board file mtime, valid task updated timestamps), exposed as
+field: updated (distinct from frontmatter metadata: updated). No kanbn files change.
+Filters/sorts preserve selection IDs on refresh and layout changes, clear when a
+source disappears or its capability is disabled, and are not saved to config.
+Task filters reset on board changes. Disabled headers still show a no-actions menu.
+Example: {"title":"Due","metadata":"due","filterable":true,"sortable":true,"filterType":"date"}.
+
+
+BOARD-SPECIFIC OVERRIDES
+
+Use the native board slug, not its display name:
+
+{
+  "columns": [
+    {"title": "Status", "field": "status", "width": 16},
+    {"title": "Task", "field": "task"}
+  ],
+  "boards": {
+    "releases": {
+      "columns": [
+        {"title": "Release", "field": "task"},
+        {"title": "Reviewer", "metadata": "reviewer", "width": 18},
+        {"title": "Stage", "field": "status", "width": 16}
+      ]
+    }
+  }
+}
+
+Board column arrays replace the whole global layout for that board. Boards
+without an override use global columns (or defaults when columns is absent).
+Column arrays must be nonempty. Unknown options and invalid rules are errors.
+
+Edits, creation, and deletion of supported configs are picked up live. Deletion
+uses the next supported file or restores defaults. Invalid JSON/YAML/rules display an error and retain the last good
+snapshot until fixed. The rule filename/location does not depend on kanbn's
+custom mainFolder/taskFolder settings. --once remains a compact native summary;
+custom table layouts affect the TUI. --json preserves all fields.
+
+CONFIGURE THE BOARD LIST
+
+Use top-level boardColumns in the same .kanitor.json. This array configures
+the list of boards and is independent of task columns and boards[slug].columns
+(the latter still overrides the task table inside one board).
+
+{
+  "boardColumns": [
+    {"title": "Board", "field": "board", "width": "fill"},
+    {"title": "Owner", "metadata": "owner", "width": "hug"},
+    {"title": "Cards", "field": "cards", "width": "hug"},
+    {"title": "Remaining", "field": "remaining", "width": "hug"}
+  ]
+}
+
+The nonempty array replaces the default BOARD (slug), NAME, CARDS, ACTIVE,
+DONE layout (including a Task Status column after NAME). Omitting boardColumns
+restores those defaults. Rules reload live.
+Each rule requires title (empty allowed), and exactly one of:
+
+  field     slug, board, description, path, main, cards, active, done, remaining,
+            updated, task_squares.
+            main is a boolean indicating the workspace's main board. Counts
+            use the whole board and its native started/completed columns,
+            unaffected by task filters/search.
+  metadata  An exact board frontmatter key from the board's options object in
+            --json, e.g. owner. This is separate from card metadata. Literal
+            dots/spaces are supported; these are not nested paths.
+
+width supports fixed integers >= 4, hug, fill, or omission (fill). Empty titles,
+missing values, JSON rendering, clipping, and date format/thresholds behave
+as with task columns. Date displays update as time passes. Board-list columns
+support filterable, sortable, and filterType on scalar values. No particular board
+column is required, and selecting/entering a board still uses its native slug
+even if the slug column is hidden. Invalid rules retain the last good snapshot.
+
+TASK SQUARES AND PROJECT COLUMNS
+
+Task squares are enabled by default under the Task Status heading in Projects
+and Boards. Include {"title":"Task Status","field":"task_squares","width":"fill"} in custom
+projectColumns or boardColumns layouts. This is a visual column, not a task
+field or a metadata key, and it cannot be filtered, sorted, or date-formatted.
+
+Order and appearance:
+- Active with recent linked work: gently pulsing hollow green.
+- Active with older/missing/unavailable work: gently pulsing hollow yellow.
+- Recent completions: solid green squares, newest completion first.
+- Paused incomplete: steady dim hollow green.
+- Recent, never started: steady hollow white.
+- Older, never started: steady dim hollow white.
+- Old or undated completions: hidden from squares, still present in task lists/counts.
+
+Defaults: recentCompleted=1d, recentWork=15m, recentCreated=1d. Override through
+top-level "taskSquares":{"recentCompleted":"1d","recentWork":"15m","recentCreated":"1d"}.
+Each value is an optional positive duration using s/m/h/d/w/y. Parent thresholds
+apply to Projects; each child's effective thresholds apply to its Boards, falling
+back to workspace rules when its local configuration is missing.
+
+Current task state comes from native startedColumns/completedColumns. Paused
+means previously started but incomplete and outside startedColumns, using
+native dates/start history. Work activity uses linked kanitor events from that
+project's log and the session's effective subject; amendments alone do not
+refresh activity. No current work is inferred from an old open session.
+
+If all squares fit, display one line. Otherwise wrap three separate nonempty
+lanes: active work; recent completions; paused/recent-unstarted/older-unstarted.
+Initial active order is recent before stale, newest logged work first. Freeze
+that order after initial work data loads; later work and state changes do not
+move those entries out of their active lane. Their appearance updates in place.
+New active entries append. Old completions and removed tasks disappear. Leaving
+the list resets the order; resizing only rewraps it. All wrapped lines remain
+selectable as part of their board/project row. Scrollbars and page keys use
+physical lines so rows taller than the viewport remain fully reachable.
+
+Individual squares are selectable: click one to show its task preview below
+the list; double-click or Enter opens that task's full details. Closing the
+details returns to the source Boards/Projects list. Projects use the native
+board membership represented by the square and preserve the child project's
+previous board, filters, search, task selection, and mode.
+Arrow horizontally into the squares column to select its first square, or last
+when entering from the right. Left/Right selects squares, then adjacent table
+columns at the ends. Up/Down follows wrapping and adjacent rows, choosing the
+nearest horizontal position and preserving the preferred position across short
+lines. Enter/Space opens the exact task; double-click also opens it. Tab has no
+default cell-navigation action. Escape goes back; p toggles the task preview. The eight-row preview
+is noninteractive and hides below 19 terminal rows. Click row text/spacing to
+select the board/project rather than a square. Square selection highlights one
+glyph without changing its status color or stable lane ordering.
+Cyan brackets surround the full focused row in Projects, Boards, and Tasks;
+wrapped rows use corner/vertical edges. Reverse highlighting marks only the
+focused cell or individual square. Other cells and inter-square spaces keep
+the normal background; square status colors are retained. Custom titles are kept.
+
+Projects deduplicate shared task IDs; incomplete membership takes precedence
+over completed membership, with active work ahead of paused/unstarted work.
+Classification uses whole boards/projects, independent of task filters/search.
+Only active badges pulse; other states are steady. Native and work reads remain
+read-only, independently refreshed, and no per-task subject process is launched.
+
+Use top-level projectColumns to replace the project table layout. Supported
+fields: project (directory basename), path (declared relative path), root (absolute
+directory), boards, cards (unique task count), state, task_squares. Empty title,
+fixed widths >=4, hug, and fill work as for board columns. Project columns do
+not support metadata; scalar fields support filterable/sortable/filterType. Omission restores defaults. Example:
+"projectColumns":[
+  {"title":"Project","field":"project","width":18},
+  {"title":"Task Status","field":"task_squares","width":"fill"}
+]
+
+For just Project and Tasks, use:
+"projectColumns":[{"title":"Project","field":"project","width":"hug"},{"title":"Tasks","field":"task_squares","width":"fill"}]
+
+VERIFY A CONFIGURATION CHANGE
+
+1. Inspect kanitor --json to confirm the workspace, board slug, and metadata key.
+2. Edit only the intended project's selected Kanitor config, preserving unrelated rules.
+3. Run kanitor --root /path/to/workspace --json and check the exit status.
+4. Inspect the TUI when visual layout matters. r forces a refresh if needed.
+
+WORK RECORDING
+
+Explicit work commands write to
+.kanitor/work/events.jsonl and never change cards or their dates. Sessions,
+phases, spans, notes, outcomes, amendments, and JSON queries are available without
+a running viewer or collector. Use kanitor work read or MCP to query records.
+Activity shows live elapsed time for open task-linked sessions. Task Squares use
+linked work events for activity recency. Unknown ends do not accrue inferred
+work time. Work is recorded through explicit commands.
+
+Run kanitor work capabilities --workspace /absolute/project to discover exact
+operation schemas and local metadata requirements before producing records.
+CLI: kanitor work OPERATION --workspace ROOT --input FILE|- (JSON stdin with -).
+MCP: install the mcp extra with uv sync --extra mcp or uv tool install
+--editable '.[mcp]', then launch kanitor mcp as a local stdio server. Every MCP
+tool requires an explicit absolute workspace. Host settings are not changed.
+MCP processes keep imported Python code in memory. Reconnect/restart the server
+after source updates, including editable-checkout updates. Config edits reload
+per operation. If only an agent rejects a new display option, compare its MCP
+installation/process with a fresh CLI; reinstall dependencies when needed.
+
+Operations: work_capabilities, work_begin, work_transition, work_span_begin,
+work_span_end, work_span_record, work_note, work_end, work_amend, work_read.
+CLI names omit work_ and replace underscores with hyphens. All mutations need
+a caller-generated request_id; reuse it only for an identical retry. Receipts
+include committed IDs, timestamp, seq, session revision, and lifecycle state.
+Do not reuse a request ID for a different session, payload, or operation.
+
+No identity/category is mandatory unless the workspace's workTracking config
+requires it. Never infer worker identity from a username, task assignment, or
+MCP client. Metadata keys are exact, including literal dots; arrays/objects and
+unfamiliar keys survive. Session/phase/span/note metadata schemas use JSON
+Schema Draft 2020-12 with local references only. workTracking.outcomes can set
+labels and requiresEvidence. Discover these through capabilities rather than
+assuming AGENT or a fixed phase vocabulary. Display columns are independent of
+recording requirements. Recording/capabilities ignore invalid or unknown TUI
+settings. Work metadata schemas and outcome/evidence rules remain enforced.
+Files must still parse as YAML/JSON objects and recording rules must be valid;
+unreadable or invalid recording policy is reported rather than bypassed.
+
+Subjects are optional {"provider":"kanbn","ref":"exact-task-id"} associations.
+Kanbn references resolve through native read APIs, including archives/custom
+folders. Other providers are opaque. Task moves do not change identity;
+renames require explicit per-session subject amendments, retaining originals.
+Card metadata is copied into a session only when explicitly supplied.
+
+Phases are exclusive; a transition ends one and starts the next atomically.
+Spans may overlap and never increase phase totals. Close child spans before
+parents and all open spans before ending a session. Retrospective span-record
+inputs require reported_start/reported_end with offsets; optional
+measured_duration_ms and clock remain producer-reported, not independent proof.
+Outside-session and inconsistent timing is retained with warnings. Open work
+has no credited trailing duration. Closing work never completes a kanbn task.
+
+Amendments require target {kind,id}, the expected current session revision,
+reason, and correction. Session/span labels, metadata, outcomes, evidence, and
+effective timing can be corrected; session subjects can be rebound; phase
+labels/metadata/timing and note text/metadata can be corrected. Event targets
+can identify original phase or note events. Phase-boundary changes move both
+adjacent endpoints and reject invalid ordering. Original timestamps/provenance
+remain intact; timing changes cannot implicitly close or reopen work.
+An isolated {"state":"interrupted"} correction marks open session/span
+descendants interrupted with unknown ends. Use a new request ID per amendment.
+
+work_read defaults to events; view=sessions returns derived summaries. Filter
+by session_id or subject. Use next_after_seq as after_seq and retain as_of_seq
+for a frozen snapshot. Defaults: 100 records, maximum 1000. Event cursors use
+workspace seq; session cursors use created_seq. Historical schema mismatches
+are warnings, and raw reads survive invalid current config.
+
+A truncated final record requires explicit CLI maintenance:
+kanitor work recover --workspace ROOT --input repair.json, where repair.json
+contains request_id and reason. It preserves damaged bytes and a recovery
+manifest before removing only the partial suffix. Do not manually truncate a
+log, skip middle corruption, or merge divergent log copies. Local macOS filesystems
+have been tested. Linux locking/durability is untested; network/distributed
+locking is not claimed.
+
+SHARE THIS GUIDANCE
+
+Add this line to a consuming project's AGENTS.md or equivalent instructions:
+
+  For Kanitor features and configuration, run `kanitor --agent-guide`.
+
+This command ships with the installed version, so agents in other projects
+do not need a path to Kanitor's source checkout or a separate plugin/skill.
