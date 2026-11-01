@@ -93,20 +93,25 @@ COMMENTS = {
                    '# Use Ctrl+letter, Shift/Ctrl/Ctrl+Shift+arrows, or F1-F24.\n'
                    '# jumpLeft/jumpRight: one cell, or five squares in Task Squares.\n'
                    '# toggleActivity: a; focusPane: Tab/Shift+Tab when Activity is shown.\n'
+                   '# toggleResize: r; focusPane cycles dividers in resize mode; refresh: R.\n'
+                   '# toggleSelection: v; drag to highlight visible text, copySelection: y.\n'
                    '# Text editors retain Enter/Escape/Backspace/Ctrl+U and literal typing.\n',
-    'columns': '# Task table. Fields: status, task, id, description; metadata: any ticket key.\n',
+    'columns': '# Task table. Fields: status_square, status, task, id, description; metadata: any ticket key.\n'
+               '# status_square is optional/reorderable; empty title + hug uses one cell.\n',
     'boards': '# Per-board task column replacements, keyed by native board slug.\n',
     'boardColumns': '# Boards table. Fields: slug, board, description, path, main, cards, active,\n'
                     '# done, remaining, updated, task_squares; metadata reads native board frontmatter.\n',
     'projectColumns': '# Projects table. Fields: project, path, root, boards, cards, state, task_squares.\n'
                       '# Project columns do not accept metadata; scalar filter/sort rules are supported.\n',
     'activityColumns': '# Activity pane (a toggles, Tab switches focus). Selectable cells and headers.\n'
-                       '# Fields: project, board, slug, id, task, description, status, assigned, activity,\n'
+                       '# Active tasks first; recent completions below (taskSquares.recentCompleted).\n'
+                       '# Fields: project, board, slug, id, task, description, status_square, status, assigned, activity,\n'
                        '# session, started_at, elapsed. Metadata reads the ticket.\n'
                        '# project is shown only in Projects; board (name) and slug in Projects/Boards.\n'
-                       '# Filter/sort default on; elapsed supports sorting only. Use false to disable.\n'
-                       '# elapsed is the latest open work session age, never time in status.\n',
-    'taskSquares': '# Recency windows in seconds (86400s = 1d, 900s = 15m).\n',
+                       '# Filter/sort default on; elapsed supports sorting only; status_square neither.\n'
+                       '# Projects/Boards only; Activity is unavailable in Tasks.\n'
+                       '# elapsed: live current session for active tasks; summed confirmed sessions for completed.\n',
+    'taskSquares': '# Shared status_square/task_squares recency windows (86400s = 1d, 900s = 15m).\n',
     'workTracking': '# Optional work recording rules. No identity is required by default;\n'
                     '# metadata schemas and outcome evidence requirements are empty.\n',
 }
@@ -128,11 +133,13 @@ EXAMPLES = """# --- Optional examples (commented out) ---
 #   nextBoard: ["]"]
 #   refresh: []  # Disable the refresh shortcut; automatic watching continues.
 #   toggleActivity: [a]
+#   toggleResize: [r]
 #   focusPane: [tab, shift+tab]
 # To use Tab for a different action, set focusPane: [] or rebind it (e.g. F6).
 
 # Custom task columns with a filterable assignee and age-dependent dates:
 # columns:
+#   - {title: "", field: status_square, width: hug}
 #   - {title: Status, field: status, width: "2,hug,8"}
 #   - {title: Assignee, metadata: assignee, width: "8,hug,20", filterable: true, sortable: true}
 #   - title: Updated
@@ -169,8 +176,9 @@ EXAMPLES = """# --- Optional examples (commented out) ---
 #   recentWork: 15m
 #   recentCreated: 1d
 
-# Compact Activity pane (all views use this section):
+# Compact Activity pane (Projects and Boards use this section):
 # activityColumns:
+#   - {title: "", field: status_square, width: hug}
 #   - {title: Project, field: project, width: "hug,18"}
 #   - {title: Board, field: board, width: "hug,18"}
 #   - {title: Elapsed, field: elapsed, width: hug}

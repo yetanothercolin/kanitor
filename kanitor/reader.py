@@ -14,6 +14,20 @@ class ReadError(Exception):
     pass
 
 
+def warning_messages(snapshot, board=None):
+    """Actionable diagnostics for omitted tasks, separate from a failed read."""
+    return [f"{item['board']}/{item['task']}: {item['error']}"
+            for item in (snapshot or {}).get('warnings', [])
+            if board is None or item['board'] == board]
+
+
+def warning_summary(snapshot, board=None):
+    messages = warning_messages(snapshot, board)
+    if not messages:
+        return ''
+    return f"PARTIAL · {len(messages)} unreadable task{'s' if len(messages) != 1 else ''} · {messages[0]}"
+
+
 def command(root):
     return ['node', str(BRIDGE), str(root)]
 

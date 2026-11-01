@@ -34,7 +34,7 @@ class TableStateTests(unittest.TestCase):
     def test_defaults_and_capability_validation_across_scopes(self):
         rules = parse_config({})
         self.assertEqual([(c.can_filter, c.can_sort, c.filter_kind) for c in rules.columns],
-                         [(True, False, 'enum'), (True, True, 'date'), (True, True, 'enum'), (True, False, 'string')])
+                         [(False, False, 'enum'), (True, False, 'enum'), (True, True, 'date'), (True, True, 'enum'), (True, False, 'string')])
         for scope in ('columns', 'boardColumns', 'projectColumns'):
             column = parse_config({scope: [{'title': '', 'field': 'name', 'filterable': True, 'sortable': True, 'filterType': 'enum'}]})
             columns = column.columns if scope == 'columns' else column.board_columns if scope == 'boardColumns' else column.project_columns
@@ -65,7 +65,7 @@ class TableStateTests(unittest.TestCase):
         data['boards'][0]['tasks'][1]['description'] = 'Full body UNIQUE WORD'
         explorer.apply(data)
         name = explorer.column_rules.columns[-1]
-        status = explorer.column_rules.columns[0]
+        status = explorer.column_rules.columns[1]
         explorer.task_state.filters[name.key] = Criterion('string', 'unique word')
         explorer.task_state.filters[status.key] = Criterion('enum', {status.filter_token(explorer.board['tasks'][1])})
         self.assertEqual([r['id'] for r in explorer.rows], ['two'])

@@ -31,7 +31,7 @@ def session(task='two', started=NOW - 5, **extra):
 
 
 class ActivityTests(ProjectFixture):
-    def task_app(self, view='tasks', height=28, width=110):
+    def task_app(self, view='boards', height=28, width=110):
         explorer = Explorer()
         explorer.apply(snapshot())
         app = App(test_ui.StyledScreen(height, width), self.root, explorer, view == 'tasks')
@@ -94,6 +94,76 @@ class ActivityTests(ProjectFixture):
         self.assertFalse(app.activity.focus.header)
         self.assertEqual(app.activity.current['id'], 'two')
 
+    def test_focused_activity_draws_context_and_shortcuts_on_separate_rows(self):
+        for view in ('boards', 'projects'):
+            app = self.cell_app() if view == 'boards' else self.app()
+            if view == 'projects':
+                self.fill(app)
+                if not app.activity.shown:
+                    app.handle('a')
+                app.handle('\t')
+            for width in (60, 110, 160):
+                with self.subTest(view=view, width=width):
+                    app.screen = test_ui.StyledScreen(28, width)
+                    self.draw(app)
+                    lines = app.screen.text().splitlines()
+                    status, footer = lines[-2].strip(), lines[-1].strip()
+                    self.assertTrue(status.startswith('Activity ·'))
+                    self.assertIn('active', status)
+                    self.assertIn('cells', footer)
+                    self.assertNotIn('cells', status)
+                    self.assertNotIn('Sort:', footer)
+                    self.assertNotEqual(status, footer)
+                    app.activity.focus.header = True
+                    self.draw(app)
+                    self.assertIn('column menu', app.screen.text().splitlines()[-1])
+            app.handle('\n')
+            self.draw(app)
+            self.assertIsNotNone(app.column_menu)
+            status, footer = app.screen.text().splitlines()[-2:]
+            self.assertIn('Activity ·', status)
+            self.assertNotEqual(status.strip(), footer.strip())
+
+    def test_activity_status_retains_its_filters_sort_warnings_and_reader_errors(self):
+        from kanitor.table_state import Criterion
+        app = self.cell_app()
+        app.screen = test_ui.StyledScreen(28, 160)
+        task, owner = [column for column, _ in app.activity.columns[:2]]
+        app.activity.state.filters[owner.key] = Criterion('only', owner.filter_token(app.activity.rows[1]))
+        app.activity.state.sort = task.key, True
+        app.explorer.board_state.sort = (('field', 'updated'), False)
+        self.draw(app)
+        status, footer = app.screen.text().splitlines()[-2:]
+        self.assertIn('1 active', status)
+        self.assertIn('1 filter', status)
+        self.assertIn('Sort: Task ↓', status)
+        self.assertNotIn('Sort: UPDATED', status)
+        self.assertNotIn('filter', footer)
+        self.assertNotIn('Sort:', footer)
+        app.reader.error = 'Native reader unavailable'
+        self.draw(app)
+        self.assertIn(app.reader.error, app.screen.text().splitlines()[-2])
+        self.assertIn('cells', app.screen.text().splitlines()[-1])
+        app.reader.error = ''
+        app.notice = 'Could not save view preferences'
+        self.draw(app)
+        self.assertIn(app.notice, app.screen.text().splitlines()[-2])
+        app.notice = ''
+        app.screen = test_ui.StyledScreen(24, 160)
+        self.draw(app)
+        self.assertIn('Preview needs 25 rows', app.screen.text().splitlines()[-2])
+        self.assertNotIn('Preview needs', app.screen.text().splitlines()[-1])
+
+    def test_activity_in_projects_does_not_hide_catalog_errors(self):
+        app = self.app()
+        self.fill(app)
+        app.handle('a')
+        app.handle('\t')
+        app.catalog.error = 'Configuration unavailable'
+        self.draw(app)
+        self.assertIn('Configuration unavailable', app.screen.text().splitlines()[-2])
+        self.assertIn('cells', app.screen.text().splitlines()[-1])
+
     def test_assigned_enter_and_context_filters_are_independent_of_main_table(self):
         app = self.cell_app()
         app.explorer.search('Second task')
@@ -128,6 +198,7 @@ class ActivityTests(ProjectFixture):
 
     def test_activity_string_and_date_editors_validate_and_recover_empty_results(self):
         app = self.cell_app()
+        geometry = app.preview_rect, app.activity.rect, app.task_height
         app.handle('f')
         self.action(app, 'filter')
         for key in 'NATIVE metadata':
@@ -144,6 +215,8 @@ class ActivityTests(ProjectFixture):
         self.assertEqual(app.activity.rows, [])
         self.assertTrue(app.activity.focus.header)
         self.assertIn('No tickets match Activity filters.', app.screen.text())
+        self.assertIn('No Activity ticket selected.', app.screen.text())
+        self.assertEqual((app.preview_rect, app.activity.rect, app.task_height), geometry)
         app.handle('\n')
         self.action(app, 'clear')
         self.draw(app)
@@ -265,7 +338,7 @@ class ActivityTests(ProjectFixture):
                 expected = 'index' if identity[1] == 'two' else 'review'
                 self.assertEqual(''.join(app.screen.grid[y][x:x + size]).strip(), expected)
         app.activity_focus_column(0)
-        self.assertIn('Enter/Space board', app.activity_status())
+        self.assertIn('Enter/Space board', app.activity_footer())
         app.handle(curses.KEY_UP)
         app.handle('\n')
         self.action(app, 'desc')
@@ -286,7 +359,8 @@ class ActivityTests(ProjectFixture):
         self.draw(app)
         self.assertEqual((app.view, app.explorer.board_slug), ('tasks', 'review'))
         self.assertFalse(app.activity.focused)
-        self.assertEqual([column.field for column, _ in app.activity.columns], ['name'])
+        self.assertFalse(app.activity_visible)
+        self.assertIsNone(app.activity.rect)
 
     def test_activity_slug_opens_board_in_exact_project(self):
         app = self.app()
@@ -345,11 +419,11 @@ class ActivityTests(ProjectFixture):
         app.handle('\x1b')
         app.handle('\t')
         app.focus.header = True
-        app.focus_column(0)
+        app.focus_column(1)
         app.handle('\n')
         self.draw(app)
         self.assertNotEqual(app.column_menu.get('table'), 'activity')
-        self.assertEqual(app.column_menu['column'].field, 'status')
+        self.assertEqual(app.column_menu['column'].field, 'board')
 
     def test_activity_capabilities_can_be_configured(self):
         self.assertEqual(parse_config({}).activity_columns[-1].field, 'task')
@@ -416,6 +490,147 @@ class ActivityTests(ProjectFixture):
         self.assertEqual(len(rows), 2)
         self.assertEqual([r['elapsed'] for r in rows], [5000, 15000])
         self.assertNotEqual(rows[0]['key'], rows[1]['key'])
+
+    def test_recent_completions_follow_active_tasks_using_native_dates_and_history(self):
+        app = self.task_app()
+        template = app.explorer.board['tasks'][1]
+        def done(identity, completed, **extra):
+            return dict(template, id=identity, column='Shipped', metadata={'completed': completed}, **extra)
+        app.explorer.board['tasks'] = [done('older', date(NOW - 50)),
+            dict(template, id='idle-active'), done('newest', date(NOW - 1)), template,
+            done('cutoff', date(NOW - 86400)), done('future', date(NOW + 1)),
+            done('invalid', 'not a date'), done('missing', None),
+            done('history', None, history=[{'board': 'index', 'type': 'moved',
+                'fromColumn': 'Building', 'toColumn': 'Shipped', 'date': date(NOW - 2)}]),
+            dict(template, id='paused', column='Queue', metadata={'completed': date(NOW - 1)})]
+        app.work_reader.snapshot['sessions'].append(session('newest'))
+        before = deepcopy(app.explorer.boards)
+        rows = activity_rows([app], now=NOW)
+        self.assertEqual([r['id'] for r in rows], ['two', 'idle-active', 'newest', 'history', 'older'])
+        for row in rows[2:]:
+            self.assertTrue(row['historical'])
+            self.assertFalse(row['live'])
+            self.assertIsNone(row['elapsed'])
+            self.assertEqual(row['activity'], 'Completed')
+        self.assertEqual(app.explorer.boards, before)
+
+    def test_completions_deduplicate_prefer_active_and_respect_scope_and_project_rules(self):
+        app = self.task_app('boards')
+        data = snapshot()
+        active = data['boards'][0]['tasks'][1]
+        done = dict(active, column='Shipped', metadata={'completed': date(NOW - 20)})
+        data['boards'][0]['tasks'] = [active]
+        data['boards'][1].update(options={'completedColumns': ['Shipped']}, tasks=[done])
+        data['boards'].reverse()  # Completed membership arrives first.
+        app.explorer.apply(data)
+        rows = activity_rows([app], now=NOW)
+        self.assertEqual([(r['id'], r['historical'], r['slug']) for r in rows], [('two', False, 'index')])
+        rows = activity_rows([app], board_slug='review', now=NOW)
+        self.assertEqual([(r['id'], r['historical']) for r in rows], [('two', True)])
+        other = self.task_app('boards')
+        other.root = self.root / 'another'
+        other.explorer.apply({'boards': [data['boards'][0]], 'customization': {'taskSquares': {'recentCompleted': '10s'}}})
+        self.assertEqual(activity_rows([other], now=NOW), [])
+        other.explorer.column_rules = parse_config({'taskSquares': {'recentCompleted': '1h'}})
+        rows = activity_rows([app, other], board_slug='review', now=NOW)
+        self.assertEqual(len(rows), 2)
+        self.assertNotEqual(rows[0]['key'], rows[1]['key'])
+
+    def test_history_stays_below_column_sorted_active_rows_and_keeps_context_actions(self):
+        app = self.cell_app()
+        original = app.explorer
+        template = app.explorer.board['tasks'][0]
+        for identity, name, seconds in [('new', 'A completed task', 1), ('old', 'Z completed task', 20)]:
+            app.explorer.board['tasks'].append(dict(template, id=identity, name=name, column='Shipped',
+                description='Full historical description', metadata={'completed': date(NOW - seconds), 'assigned': 'Alex'}))
+        app.activity.state.sort = (app.activity.columns[0][0].key, True)
+        self.draw(app)
+        self.assertEqual([r['id'] for r in app.activity.rows], ['missing', 'other', 'two', 'new', 'old'])
+        app.activity.selected = str(app.root), 'new'
+        self.draw(app)
+        self.assertIn('Full historical description', app.screen.text())
+        for y, x, _, identity, index in app.activity.cell_hits:
+            attr = app.screen.attributes[y][x]
+            if identity[1] == 'old' or (identity[1] == 'new' and index != 0):
+                self.assertTrue(attr & curses.A_DIM)
+            if identity[1] == 'new' and index == 0:
+                self.assertTrue(attr & curses.A_REVERSE)
+                self.assertFalse(attr & curses.A_DIM)
+        app.activity_focus_column(1)
+        with patch('kanitor.activity.time.time', return_value=NOW):
+            app.handle('\n')  # Assigned only Alex, without hiding historical entries.
+        self.draw(app)
+        self.assertEqual([r['id'] for r in app.activity.rows], ['other', 'new', 'old'])
+        app.activity_focus_column(0)
+        app.handle('\n')
+        self.assertEqual(app.popup, ('card', 'new'))
+        app.handle('\x1b')
+        self.assertIs(app.explorer, original)
+        self.assertEqual(app.activity.selected, (str(app.root), 'new'))
+
+    def test_completion_ages_out_without_file_changes_and_reopening_restores_live_clock(self):
+        app = self.task_app()
+        task = app.explorer.board['tasks'][1]
+        task['column'] = 'Shipped'
+        task['metadata']['completed'] = date(NOW - 86399)
+        app.handle('a')
+        app.handle('\t')
+        self.draw(app)
+        self.assertTrue(app.activity.current['historical'])
+        self.assertIsNone(app.activity.current['elapsed'])
+        geometry = app.preview_rect, app.activity.rect
+        app.reader.poll = app.work_reader.poll = Mock()
+        with patch('kanitor.activity.time.time', return_value=NOW):
+            app.poll()
+        app.needs_redraw = False
+        with patch('kanitor.activity.time.time', return_value=NOW + 1):
+            app.poll()
+        self.assertTrue(app.needs_redraw)
+        self.draw(app, NOW + 1)
+        self.assertIsNone(app.activity.current)
+        self.assertEqual((app.preview_rect, app.activity.rect), geometry)
+        task['column'] = 'Building'
+        self.draw(app, NOW + 2)
+        self.assertFalse(app.activity.current['historical'])
+        self.assertEqual(app.activity.current['elapsed'], 7000)
+
+    def test_completed_elapsed_sums_all_confirmed_sessions_and_marks_unknown_parts(self):
+        app = self.task_app()
+        task = app.explorer.board['tasks'][1]
+        task['column'] = 'Shipped'
+        task['metadata']['completed'] = date(NOW - 1)
+        app.work_reader.snapshot['sessions'] = [
+            session(state='closed', confirmed_session_elapsed_ms=60000),
+            session(id='second', state='closed', confirmed_session_elapsed_ms=120000),
+            session(id='zero', state='closed', confirmed_session_elapsed_ms=0),
+            session(id='other', task='different', state='closed', confirmed_session_elapsed_ms=999999)]
+        row = activity_rows([app], now=NOW)[0]
+        self.assertEqual(row['elapsed'], 180000)
+        self.assertFalse(row['live'] or row['elapsed_partial'])
+        elapsed_column = next(c for c in app.explorer.column_rules.activity_columns if c.field == 'elapsed')
+        self.assertEqual(elapsed_column.value(row).strip(), '3m  0s')
+        app.work_reader.snapshot['sessions'] += [session(id='unfinished'),
+            session(id='interrupted', state='interrupted', confirmed_session_elapsed_ms=None)]
+        row = activity_rows([app], now=NOW)[0]
+        self.assertEqual(row['elapsed'], 180000)
+        self.assertTrue(row['elapsed_partial'])
+        self.assertTrue(elapsed_column.value(row).startswith('≥'))
+        app.work_reader.error = 'Unavailable'
+        self.assertIsNone(activity_rows([app], now=NOW)[0]['elapsed'])
+
+    def test_completed_elapsed_zero_unknown_and_recorded_boundaries(self):
+        app = self.task_app()
+        task = app.explorer.board['tasks'][1]
+        task.update(column='Shipped', metadata={'completed': date(NOW - 1)})
+        for record, expected in ((session(state='closed', confirmed_session_elapsed_ms=0), 0),
+                                 (session(state='closed', started=NOW - 5, ended_at=date(NOW - 2)), 3000),
+                                 (session(state='interrupted'), None),
+                                 (session(state='closed', confirmed_session_elapsed_ms=-1), None),
+                                 (session(state='closed', confirmed_session_elapsed_ms=True), None)):
+            app.work_reader.snapshot['sessions'] = [record]
+            row = activity_rows([app], now=NOW)[0]
+            self.assertEqual(row['elapsed'], expected)
+            self.assertFalse(row['live'])
 
     def test_elapsed_is_latest_open_session_not_phase_status_age_or_closed_work(self):
         app = self.task_app()
@@ -562,9 +777,10 @@ class ActivityTests(ProjectFixture):
         self.assertEqual(app.activity.top, 0)
 
     def test_layout_resizes_empty_state_and_header_visibility(self):
-        for view in ('tasks', 'boards'):
+        for view in ('boards',):
             app = self.task_app(view)
-            app.handle('a')
+            if not app.activity.shown:
+                app.handle('a')
             app.handle('\t')
             for height, width in ((16, 60), (24, 80), (25, 100), (28, 110), (40, 160)):
                 with self.subTest(view=view, height=height):
@@ -577,7 +793,7 @@ class ActivityTests(ProjectFixture):
             for task in app.explorer.board['tasks']:
                 task['column'] = 'Shipped'
             self.draw(app)
-            self.assertIn('No tickets in progress', app.screen.text())
+            self.assertIn('No active or recently completed tickets', app.screen.text())
             self.assertIsNone(app.activity.selected)
 
     def test_mouse_preview_double_click_and_inert_preview(self):

@@ -17,8 +17,9 @@ class DateColumnTests(unittest.TestCase):
         return column.value({'metadata': {'updated': date.isoformat()}}, now=self.now)
 
     def test_updated_default_follows_status_and_formats_native_iso_timestamp(self):
-        self.assertEqual(DEFAULT_COLUMNS[0].field, 'status')
-        updated = DEFAULT_COLUMNS[1]
+        self.assertEqual(DEFAULT_COLUMNS[0].field, 'status_square')
+        self.assertEqual(DEFAULT_COLUMNS[1].field, 'status')
+        updated = DEFAULT_COLUMNS[2]
         self.assertEqual(updated.metadata, 'updated')
         self.assertEqual(updated.width, 16)
         self.assertEqual(self.value(updated, self.now), '2026-10-23 16:01')

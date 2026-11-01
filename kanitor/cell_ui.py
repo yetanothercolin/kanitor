@@ -431,6 +431,8 @@ class CellUI:
             column = by_key.get(sorting[0])
             label = column.label if column else sorting[0][1].title()
             parts.append(f"Sort: {label} {'↓' if sorting[1] else '↑'}")
+        elif self.view == 'tasks':
+            parts.append('Sort: Status, Updated ↓')
         return ' · '.join(parts)
 
     def handle_table_key(self, key):
@@ -513,7 +515,7 @@ class CellUI:
                 self.focus_column(focus.index, from_right=delta < 0, preserve_goal=True)
             self.task_header_selected = focus.header
             return True
-        if self.selected_square and action == 'togglePreview':
+        if self.view in ('boards', 'projects') and action == 'togglePreview':
             self.square_preview_shown = not self.square_preview_shown
             return True
         return False

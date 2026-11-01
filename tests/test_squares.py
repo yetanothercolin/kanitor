@@ -306,6 +306,7 @@ class SquareUITests(unittest.TestCase):
 
     def test_double_click_survives_preview_reflow_at_original_coordinates(self):
         app = self.app(tasks=[card(str(i), created=at(-10)) for i in range(100)], height=28)
+        app.square_preview_shown = False
         self.draw(app)
         with patch('kanitor.ui.time.monotonic', return_value=100):
             row, left = self.click(app, '45')
@@ -321,8 +322,12 @@ class SquareUITests(unittest.TestCase):
     def test_keyboard_square_navigation_preview_toggle_and_cell_exit(self):
         app = self.app(height=28)
         self.draw(app)
+        geometry = app.preview_rect, app.board_height
+        self.assertEqual(app.preview_rect[2], 8)
+        self.assertIn('No task selected.', app.screen.text())
         app.handle(curses.KEY_RIGHT)
         self.draw(app)
+        self.assertEqual((app.preview_rect, app.board_height), geometry)
         self.assertEqual(app.selected_square, ('index', 'running-newer'))
         app.handle(curses.KEY_RIGHT)
         self.assertEqual(app.selected_square, ('index', 'running'))
@@ -344,8 +349,17 @@ class SquareUITests(unittest.TestCase):
         app.handle(curses.KEY_LEFT)
         self.draw(app)
         self.assertIsNone(app.selected_square)
-        self.assertIsNone(app.preview_rect)
+        self.assertEqual(app.preview_rect[2], 8)
+        self.assertIn('No task selected.', app.screen.text())
+        self.assertEqual((app.preview_rect, app.board_height), geometry)
         self.assertEqual(app.view, 'boards')
+        # The preview can be collapsed even without a selected square.
+        app.handle('p')
+        self.draw(app)
+        self.assertIsNone(app.preview_rect)
+        app.handle('p')
+        self.draw(app)
+        self.assertEqual((app.preview_rect, app.board_height), geometry)
 
     def test_keyboard_square_pages_and_ten_item_jumps_reach_hidden_squares(self):
         app = self.app(tasks=[card(str(i), created=at(-10)) for i in range(100)], height=28)
@@ -427,7 +441,8 @@ class SquareUITests(unittest.TestCase):
         self.draw(app)
         self.assertEqual(app.explorer.board_slug, 'empty')
         self.assertIsNone(app.selected_square)
-        self.assertIsNone(app.preview_rect)
+        self.assertEqual(app.preview_rect[2], 8)
+        self.assertIn('No task selected.', app.screen.text())
 
     def test_vertical_square_navigation_crosses_projects_and_opens_destination_task(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -480,7 +495,8 @@ class SquareUITests(unittest.TestCase):
         app.reader.revision += 1
         self.draw(app)
         self.assertIsNone(app.selected_square)
-        self.assertIsNone(app.preview_rect)
+        self.assertEqual(app.preview_rect, (top, left, 8, app.screen.width - 2))
+        self.assertIn('No task selected.', app.screen.text())
 
     def test_project_square_preview_and_details_use_correct_board_and_restore_child_context(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -503,8 +519,12 @@ class SquareUITests(unittest.TestCase):
             original = child.explorer
             original.search('retained search')
             self.draw(app)
+            geometry = app.preview_rect, app.project_height
+            self.assertEqual(app.preview_rect[2], 8)
+            self.assertIn('No task selected.', app.screen.text())
             self.click(app, 'shared')
             self.draw(app)
+            self.assertEqual((app.preview_rect, app.project_height), geometry)
             self.assertIsNone(app.active)
             self.assertIn('Correct review task description.', app.screen.text())
             self.assertEqual(app.preview_rect[2], 8)
@@ -576,13 +596,96 @@ class SquareUITests(unittest.TestCase):
         self.assertEqual([app.square_attr(Square('a', 'active'), phase) for phase in range(3)], [1, 2, 3])
         self.assertEqual([app.square_attr(Square('a', 'stale'), phase) for phase in range(3)], [4, 5, 6])
         self.assertEqual(app.square_attr(Square('a', 'paused'), 0), 7 | curses.A_DIM)
+        self.assertEqual(app.square_attr(Square('a', 'done_old'), 0), 7 | curses.A_DIM)
+        self.assertEqual(Square('a', 'done_old').glyph, '■')
         self.assertEqual(app.square_attr(Square('a', 'new'), 0), 8)
         self.assertEqual(app.square_attr(Square('a', 'old'), 0), 8 | curses.A_DIM)
         self.draw(app)
         self.assertTrue(app.squares_animated)
         app.handle('\n')
         self.draw(app)
+        self.assertTrue(app.squares_animated)  # Tasks now use the same animated squares.
+        app.handle('\n')
+        self.draw(app)
         self.assertFalse(app.squares_animated)
+
+    def test_all_square_columns_share_glyphs_colors_and_pulse_phase(self):
+        app = self.app(height=50, width=110)
+        app.screen = StyledScreen(50, 110)
+        app.colors = {'square_green0': 0x100, 'square_green1': 0x200, 'square_green2': 0x300,
+                      'square_yellow0': 0x400, 'square_yellow1': 0x500, 'square_yellow2': 0x600,
+                      'done': 0x700, 'square_white': 0x800, 'dim': 0x900}
+        for at_time in (0, .7, 1.4):
+            with self.subTest(phase=at_time), patch('kanitor.ui.time.monotonic', return_value=at_time):
+                app.view = 'boards'
+                app.draw()
+                overview = {square.id: (app.screen.grid[y][x], app.screen.attributes[y][x])
+                            for y, x, _, square in app.square_hits}
+                self.assertNotIn('hidden', overview)
+                app.view = 'tasks'
+                app.focus.header = True
+                app.draw()
+                detail = {identity: (app.screen.grid[y][x], app.screen.attributes[y][x])
+                          for y, x, _, identity, index in app.cell_hits
+                          if app.cell_columns[index][0].field == 'status_square'}
+                self.assertEqual({key: detail[key] for key in overview}, overview)
+                self.assertEqual(detail['hidden'], ('■', app.colors['done'] | curses.A_DIM))
+                app.view = 'boards'  # Activity is a summary-view pane.
+                app.explorer.column_rules = parse_config({'activityColumns': [
+                    {'title': '', 'field': 'status_square', 'width': 'hug'},
+                    {'title': 'Task', 'field': 'task'}]})
+                app.activity.shown = True
+                app.draw()
+                activity = {identity[1]: (app.screen.grid[y][x], app.screen.attributes[y][x])
+                            for y, x, _, identity, index in app.activity.cell_hits
+                            if app.activity.columns[index][0].field == 'status_square'}
+                self.assertEqual(set(activity), {'done', 'done-older', 'running', 'running-newer', 'stale'})
+                self.assertEqual(activity, {key: overview[key] for key in activity})
+                app.activity.shown = False
+                app.explorer.column_rules = parse_config({'boardColumns': [
+                    {'title': 'Board', 'field': 'name', 'width': 12},
+                    {'title': 'Squares', 'field': 'task_squares', 'width': 5}]})
+
+    def test_focused_status_square_preserves_color_and_highlights_only_the_glyph(self):
+        app = self.app(tasks=[card('paused', started=at(-10000))], height=28)
+        app.screen = StyledScreen(28, 70)
+        app.colors['done'] = 0x100
+        app.explorer.column_rules = parse_config({'columns': [
+            {'title': '', 'field': 'status_square', 'width': 'fill'}]})
+        app.view = 'tasks'
+        self.draw(app)
+        y, x, width, _, _ = app.cell_hits[0]
+        attr = app.screen.attributes[y][x]
+        self.assertTrue(attr & curses.A_REVERSE)
+        self.assertTrue(attr & app.colors['done'])
+        self.assertFalse(attr & curses.A_DIM)
+        self.assertTrue(all(not value & curses.A_REVERSE for value in app.screen.attributes[y][x + 1:x + width]))
+
+    def test_status_square_alone_polls_work_and_repaints_threshold_and_pulse_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = self.app(height=28)
+            app.root = Path(directory)
+            app.view = 'tasks'
+            self.draw(app)
+            with patch.object(app.reader, 'poll'), patch.object(app.work_reader, 'poll') as work_poll, \
+                    patch('kanitor.ui.time.monotonic', return_value=0):
+                app.poll()
+                app.draw()
+                app.poll()
+                app.needs_redraw = False
+                app.poll()
+                self.assertFalse(app.needs_redraw)
+                self.assertTrue(work_poll.called)
+            with patch.object(app.reader, 'poll'), patch.object(app.work_reader, 'poll'), \
+                    patch('kanitor.ui.time.monotonic', return_value=.7):
+                app.poll()
+                self.assertTrue(app.needs_redraw)
+            app.needs_redraw = False
+            with patch.object(app.reader, 'poll'), patch.object(app.work_reader, 'poll'), \
+                    patch('kanitor.ui.time.monotonic', return_value=.7), \
+                    patch('kanitor.ui.time.time', return_value=NOW + 1):
+                app.poll()
+                self.assertTrue(app.needs_redraw)
 
     def test_clock_repaints_pulses_and_age_changes_but_not_an_unchanged_tick(self):
         app = self.app()
@@ -604,7 +707,7 @@ class SquareUITests(unittest.TestCase):
             app.poll()
             self.assertTrue(app.needs_redraw)
 
-    def test_project_column_uses_parent_rules_and_pins_until_leaving_projects(self):
+    def test_project_column_uses_effective_project_rules_and_pins_until_leaving_projects(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             child_root = root / 'one'
@@ -634,6 +737,13 @@ class SquareUITests(unittest.TestCase):
             app.show_projects()
             self.draw(app)
             self.assertNotIn('running-newer', app.square_view.active[str(child_root)])
+            child.explorer.column_rules = parse_config({'taskSquares': {'recentWork': '5s', 'recentCompleted': '30s'}})
+            child.reader.revision += 1
+            self.draw(app)
+            projected = {square.id: square for square in app.rows()[0]['task_squares'].flat}
+            self.assertNotIn('done', projected)
+            self.assertEqual(projected['running'].kind, 'stale')
+            self.assertEqual(projected['running'], child.task_square(native, native['tasks'][3]))
 
     def test_summary_scroll_anchor_survives_rows_growing_above_it(self):
         app = self.app(tasks=[card(str(i), created=at(-10)) for i in range(30)])

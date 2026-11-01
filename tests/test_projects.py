@@ -73,6 +73,29 @@ class ProjectFixture(unittest.TestCase):
 
 
 class ProjectTests(ProjectFixture):
+    def test_empty_projects_preview_stays_visible_and_toggles_from_header(self):
+        app = self.app(paths=())
+        app.draw()
+        geometry = app.preview_rect, app.project_height
+        self.assertEqual(app.preview_rect[2], 8)
+        self.assertIn('No task selected.', app.screen.text())
+        top, left, _, _ = app.preview_rect
+        for buttons in (curses.BUTTON1_PRESSED, WHEEL_DOWN, WHEEL_UP):
+            with patch('kanitor.ui.curses.getmouse', return_value=(0, left + 4, top + 2, 0, buttons)):
+                app.handle(curses.KEY_MOUSE)
+            self.assertIsNone(app.selected_project)
+            self.assertIsNone(app.active)
+            self.assertIsNone(app.popup)
+        app.handle(curses.KEY_UP)
+        self.assertTrue(app.focus.header)
+        app.handle('p')
+        app.draw()
+        self.assertIsNone(app.preview_rect)
+        self.assertEqual(app.project_height, geometry[1] + 9)
+        app.handle('p')
+        app.draw()
+        self.assertEqual((app.preview_rect, app.project_height), geometry)
+
     def test_projects_configuration_is_explicit_ordered_and_relative(self):
         self.assertIsNone(parse_config({}).projects)
         self.assertEqual(parse_config({'projects': []}).projects, ())
@@ -226,6 +249,35 @@ class NativeProjectsTests(ProjectFixture):
             shutil.copytree(DEMO, self.root / path / '.kanbn')
         return app
 
+    def test_malformed_task_keeps_project_browsable_and_reports_partial_snapshots(self):
+        app = self.app()
+        bad = self.root / 'one/.kanbn/tasks/search-cards.md'
+        original = bad.read_text()
+        bad.write_text('Not a native card')
+        wait_for(app, lambda: all(child.reader.snapshot for child in app.children.values()))
+        one, two = app.children.values()
+        self.assertFalse(one.reader.error)
+        self.assertEqual([row['state'] for row in app.rows()], ['Partial', 'Live'])
+        app.draw()
+        self.assertIn('READ ONLY · PARTIAL', app.screen.text())
+        self.assertIn('index/search-cards', app.screen.text())
+        for flag in ('--once', '--json'):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(['--root', str(self.root), flag]), 1)
+            self.assertIn('search-cards', output.getvalue())
+            if flag == '--json':
+                projects = json.loads(output.getvalue())['projects']
+                self.assertTrue(projects[0]['snapshot']['warnings'])
+                self.assertFalse(projects[0]['error'])
+                self.assertFalse(projects[1]['snapshot']['warnings'])
+        app.open_project()
+        self.assertIs(app.active, one)
+        self.assertTrue(one.explorer.board['tasks'])
+        bad.write_text(original)
+        wait_for(app, lambda: not one.reader.snapshot['warnings'])
+        self.assertEqual(app.rows()[0]['state'], 'Live')
+
     def test_native_readers_watch_inactive_projects_and_isolate_invalid_settings(self):
         app = self.app()
         wait_for(app, lambda: all(child.reader.snapshot for child in app.children.values()))
@@ -244,7 +296,8 @@ class NativeProjectsTests(ProjectFixture):
         self.assertEqual(two.explorer.column_rules.columns[0].title, 'Second Project')
         path.unlink()
         wait_for(app, lambda: not two.reader.error)
-        self.assertEqual(two.explorer.column_rules.columns[0].title, 'STATUS')
+        self.assertEqual(two.explorer.column_rules.columns[0].field, 'status_square')
+        self.assertEqual(two.explorer.column_rules.columns[1].title, 'STATUS')
         board = two.root / '.kanbn/extra.md'
         board.write_text('# Extra\n\n## Todo\n')
         wait_for(app, lambda: len(two.explorer.boards) == 3)

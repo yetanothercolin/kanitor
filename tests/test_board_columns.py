@@ -126,18 +126,19 @@ class BoardColumnTests(unittest.TestCase):
             card['column'] = 'Done'
         data['boards'][0]['columns'] = ['Done']
         data['customization'] = {'columns': [
+            {'title': '', 'field': 'status_square', 'width': 'hug'},
             {'title': 'Status', 'field': 'status', 'width': 'hug'},
             {'title': 'Updated', 'metadata': 'updated', 'width': 'hug'},
             {'title': 'Task', 'field': 'name', 'width': 'fill'}]}
         app.explorer.apply(data)
         app.draw()
         placed, _ = app.table_layout()
-        self.assertEqual([width for _, width in placed[:2]], [6, 7])
+        self.assertEqual([width for _, width in placed[:3]], [1, 6, 7])
         lines = app.screen.text().splitlines()
         self.assertEqual(lines[5][3:9], '□ Done')
         self.assertEqual(lines[4].index('Status'), 5)
         self.assertEqual(lines[4].index('Updated'), 12)
         app.explorer.toggle_status('Done')
         app.draw()
-        self.assertEqual(app.table_layout()[0][0][1], 7)
+        self.assertEqual(app.table_layout()[0][1][1], 7)
         self.assertIn('Status▾', app.screen.text().splitlines()[4])

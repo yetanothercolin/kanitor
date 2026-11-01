@@ -11,6 +11,9 @@ Manage Python dependencies and commands with **uv**.
   `kanbn add --board <feature-board>`. Keep its
   description and acceptance criteria current. Use `kanbn help <command>` for
   the installed command syntax.
+- When a task description contains multiple items to complete, write them as
+  a Markdown list rather than packing them into a paragraph. Keep context brief
+  and put each deliverable or acceptance criterion in its own list item.
 - Move the card to `In Progress` with
   `kanbn move <task-id> --board <feature-board> --column 'In Progress'`
   when starting. Use kanbn commands for task changes so history and dates stay
@@ -48,6 +51,17 @@ do not create boards for individual tasks, agents, sessions, or releases.
 | `task-squares` | Task Squares | Square classification, ordering, wrapping, selection, previews, and task entry |
 | `work` | Work Tracking | Work recording, sessions/activities, timing, and CLI/MCP integration |
 
+- Workflow & Tooling (`index`) is local-only. Keep `.kanbn/index.md` and every
+  card on that board ignored by Git while preserving them for kanbn. Boards
+  share the tasks folder, so add each new `index` card's exact file path to
+  the Workflow & Tooling block in `.gitignore` as part of creating it. Update
+  those entries when deliberately reclassifying a card. Other feature boards
+  and their cards remain shareable.
+- After cloning, the ignored main board may be absent. Before inspecting or
+  changing tasks, initialize it with `kanbn init --name 'Workflow & Tooling'
+  --description 'Local repository workflow and tooling' --column Backlog
+  --column Todo --column 'In Progress' --column Done` if `.kanbn/index.md` is
+  missing. This leaves the existing shared feature boards intact.
 - Give each task one primary feature board. For changes spanning groups, choose
   the main feature being changed and describe the secondary impact on the card.
   Use multiple memberships only when separate workflows are deliberately needed;
@@ -88,11 +102,12 @@ uv run kanitor work begin --workspace "$PWD" --input - <<'JSON'
 JSON
 ```
 
-The native board and cards live in `.kanbn/`. The durable work log is
+The native boards and cards live in `.kanbn/`. The durable work log is
 `.kanitor/work/events.jsonl`. Preserve both as project tracking data. The
 work log, lock, and recovery files are local-only and ignored by Git because
-they can contain machine paths and unrelated project details. Keep the native
-boards/cards shareable, and never add real work logs or raw diagnostic traces
+they can contain machine paths and unrelated project details. Keep feature
+boards/cards shareable except the local Workflow & Tooling board described above,
+and never add real work logs or raw diagnostic traces
 to the public repository. Use sanitized fixtures for regression coverage.
 Use `uv run kanitor` to browse tasks and
 `uv run kanitor work read --workspace "$PWD"` to query recorded work.

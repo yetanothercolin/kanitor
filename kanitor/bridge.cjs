@@ -71,6 +71,8 @@ async function readSnapshot(root) {
   const fileStats = new Map(JSON.parse(before).map(row => [row[0], row]));
   const definitions = await main.listBoards();
   const taskCache = new Map();
+  const taskErrors = new Map();
+  const warnings = [];
   const boards = [];
   for (const definition of definitions) {
     const board = definition.main ? main : main.board(definition.slug);
@@ -82,7 +84,17 @@ async function readSnapshot(root) {
         if (seen.has(id)) throw new Error(`Duplicate card ${id} on board ${definition.slug}`);
         seen.add(id);
         // Shared card files are read once; column membership always belongs to this board.
-        if (!taskCache.has(id)) taskCache.set(id, await board.getTask(id));
+        if (!taskCache.has(id) && !taskErrors.has(id)) {
+          try {
+            taskCache.set(id, await board.getTask(id));
+          } catch (error) {
+            taskErrors.set(id, error.message);
+          }
+        }
+        if (taskErrors.has(id)) {
+          warnings.push({board: definition.slug, task: id, error: taskErrors.get(id)});
+          continue;
+        }
         tasks.push({...taskCache.get(id), id, column, board: definition.slug});
       }
     }
@@ -101,7 +113,7 @@ async function readSnapshot(root) {
   }
   if (!boards.length) throw new Error('No readable kanbn boards found. Check kanbn validate --all-boards.');
   // Python attaches customization using the shared JSON/YAML config loader.
-  return {source: 'kanbn', readOnly: true, root, boards,
+  return {source: 'kanbn', readOnly: true, root, boards, warnings,
     watch: {files, folders, signature: JSON.parse(before)}};
 }
 

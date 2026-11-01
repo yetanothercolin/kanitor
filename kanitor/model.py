@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 
 from .config import CONFIG_NAMES, Column, ColumnRules, MISSING_VALUE, parse_config
-from .table_state import TableState
+from .table_state import TableState, date_number
 
 BOARD_UPDATED = Column('UPDATED', field='updated', scope='board')
 
@@ -118,6 +118,13 @@ class Explorer:
                 if (self.statuses is None or card['column'] in self.statuses)
                 and all(column.filter_token(card) in selected for column, selected in filters)
                 and all(word in self.search_text(card) for word in words)]
+        if self.task_state.sort is None:
+            statuses = {name: index for index, name in enumerate(self.board['columns'])}
+            def default_order(card):
+                updated = date_number(card.get('metadata', {}).get('updated'))
+                return (statuses.get(card['column'], len(statuses)), updated is None,
+                        -updated if updated is not None else 0)
+            rows.sort(key=default_order)
         return self.task_state.apply(rows, self.task_state_columns)
 
     @staticmethod
@@ -306,6 +313,7 @@ class Explorer:
 
 
 def plain_snapshot(snapshot, explorer):
+    from .reader import warning_messages
     lines = [f"KANITOR · {snapshot['root']} · READ ONLY", '', 'BOARDS']
     for board in explorer.boards:
         totals = counts(board)
@@ -315,4 +323,8 @@ def plain_snapshot(snapshot, explorer):
         lines.extend(f"[{card['column']}] {card['name']} ({card['id']})" for card in explorer.rows)
         if not explorer.rows:
             lines.append('No matching tasks.' if explorer.query or explorer.statuses is not None or explorer.column_filters else 'This board has no tasks yet.')
+    messages = warning_messages(snapshot)
+    if messages:
+        lines.extend(['', 'PARTIAL · Unreadable tasks omitted:'])
+        lines.extend(f'Warning: {message}' for message in messages)
     return '\n'.join(lines)

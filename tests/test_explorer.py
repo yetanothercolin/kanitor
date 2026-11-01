@@ -22,6 +22,28 @@ def snapshot():
 
 
 class ExplorerTests(unittest.TestCase):
+    def test_default_tasks_group_by_status_then_newest_update_with_stable_missing_ties(self):
+        data = snapshot()
+        template = data['boards'][0]['tasks'][1]
+        specs = [('older', 'Building', '2026-10-28T12:00:00Z'),
+                 ('missing', 'Building', None), ('invalid', 'Building', 'bad'),
+                 ('newest', 'Building', '2026-10-30T12:00:00Z'),
+                 ('tie', 'Building', '2026-10-30T12:00:00Z'),
+                 ('todo', 'Queue', None), ('done', 'Shipped', '2026-10-31T12:00:00Z')]
+        data['boards'][0]['tasks'] = [dict(template, id=identity, column=status, metadata={'updated': updated})
+                                    for identity, status, updated in specs]
+        explorer = Explorer()
+        explorer.apply(data)
+        expected = ['todo', 'newest', 'tie', 'older', 'missing', 'invalid', 'done']
+        self.assertEqual([row['id'] for row in explorer.rows], expected)
+        update = next(c for c in explorer.column_rules.columns if c.metadata == 'updated')
+        explorer.task_state.sort = update.key, True
+        self.assertEqual(explorer.rows[0]['id'], 'done')
+        explorer.task_state.sort = None
+        self.assertEqual([row['id'] for row in explorer.rows], expected)
+        data['boards'][0]['tasks'][0]['metadata']['updated'] = '2026-10-31T13:00:00Z'
+        self.assertEqual([row['id'] for row in explorer.rows][:3], ['todo', 'older', 'newest'])
+
     def setUp(self):
         self.data = snapshot()
         self.explorer = Explorer()

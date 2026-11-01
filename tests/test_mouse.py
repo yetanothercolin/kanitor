@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from kanitor.mouse import SgrMouseInput, WHEEL_DOWN, WHEEL_UP, WheelGesture, decode_sgr
+from kanitor.mouse import LEFT_DRAG, SgrMouseInput, WHEEL_DOWN, WHEEL_UP, WheelGesture, decode_sgr, is_left_drag, native_button_motion
 
 
 class InputScreen:
@@ -102,12 +102,17 @@ class MouseInputTests(unittest.TestCase):
             app.handle(app.read_key())
             self.assertEqual(app.explorer.selected_id, selected_id)
 
-    def test_vertical_axes_modifiers_clicks_and_ignored_motion(self):
+    def test_vertical_axes_modifiers_clicks_drag_release_and_ignored_motion(self):
         self.assertEqual(decode_sgr('\x1b[<64;11;9M'), (0, 10, 8, 0, WHEEL_UP))
         self.assertEqual(decode_sgr('\x1b[<65;11;9M')[4], WHEEL_DOWN)
         self.assertEqual(decode_sgr('\x1b[<68;11;9M')[4], WHEEL_UP | curses.BUTTON_SHIFT)
         self.assertEqual(decode_sgr('\x1b[<0;11;9M')[4], curses.BUTTON1_PRESSED)
-        for code, terminator in ((66, 'M'), (67, 'M'), (35, 'M'), (32, 'M'), (0, 'm'), (65, 'm')):
+        self.assertEqual(decode_sgr('\x1b[<32;11;9M')[4], LEFT_DRAG)
+        self.assertEqual(decode_sgr('\x1b[<36;11;9M')[4], LEFT_DRAG | curses.BUTTON_SHIFT)
+        self.assertEqual(decode_sgr('\x1b[<0;11;9m')[4], curses.BUTTON1_RELEASED)
+        self.assertTrue(is_left_drag(LEFT_DRAG))
+        self.assertFalse(is_left_drag(WHEEL_DOWN))
+        for code, terminator in ((66, 'M'), (67, 'M'), (35, 'M'), (33, 'M'), (34, 'M'), (65, 'm')):
             with self.subTest(code=code, terminator=terminator):
                 self.assertEqual(decode_sgr(f'\x1b[<{code};11;9{terminator}')[4], 0)
         self.assertIsNone(decode_sgr('\x1b[<64;0;9M'))
@@ -161,7 +166,15 @@ class MouseInputTests(unittest.TestCase):
             reader.start()
             mask.assert_called_once_with(0)
         reader.close()
-        self.assertEqual(output.getvalue(), '\x1b[?1000h\x1b[?1006h\x1b[?1006l\x1b[?1000l')
+        self.assertEqual(output.getvalue(), '\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?1006l\x1b[?1002l\x1b[?1000l')
+
+    def test_native_motion_requests_held_button_reports_and_disables_them(self):
+        output = io.StringIO()
+        native_button_motion(True, output)
+        native_button_motion(False, output)
+        self.assertEqual(output.getvalue(), '\x1b[?1003l\x1b[?1002h\x1b[?1002l')
+        with patch('kanitor.mouse.curses.BUTTON5_PRESSED', 1 << 21, create=True):
+            self.assertTrue(is_left_drag(curses.REPORT_MOUSE_POSITION | curses.BUTTON1_PRESSED))
 
     def test_recorded_upward_gesture_never_moves_any_component_down(self):
         from test_ui import UITests

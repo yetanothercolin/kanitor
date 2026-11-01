@@ -38,7 +38,8 @@ class KeyBindingTests(unittest.TestCase):
         self.assertIsNone(bindings.action(curses.KEY_DOWN))
         self.assertEqual(bindings.action(curses.KEY_F1), 'help')
         self.assertIsNone(bindings.action('?'))
-        self.assertIsNone(bindings.action('r'))
+        self.assertIsNone(bindings.action('R'))
+        self.assertEqual(bindings.action('r'), 'toggleResize')
         self.assertEqual(bindings.action('k'), 'up')
         self.assertEqual(bindings.label('refresh'), 'Unbound')
         self.assertEqual(parse_config({}).keybindings, DEFAULT_BINDINGS)
@@ -130,7 +131,7 @@ class KeyBindingUITests(ProjectFixture):
         self.assertEqual(app.explorer.query, '')
         app.draw()
         app.focus.header = True
-        app.focus_column(3)
+        app.focus_column(4)
         app.handle('c')
         app.handle('o')  # Filter editor.
         self.assertEqual(app.column_menu['mode'], 'string')
@@ -142,7 +143,7 @@ class KeyBindingUITests(ProjectFixture):
         self.assertIsNone(app.column_menu)
 
     def test_tab_bindings_move_cells_and_custom_preview_status_and_board_actions(self):
-        app = self.tasks({'right': ['tab'], 'left': ['shift+tab'], 'focusPane': [], 'togglePreview': ['v'],
+        app = self.tasks({'right': ['tab'], 'left': ['shift+tab'], 'focusPane': [], 'togglePreview': ['v'], 'toggleSelection': [],
                           'statusFilter': ['t'], 'nextBoard': ['n'], 'previousBoard': ['N']})
         app.handle('\t')
         self.assertEqual(app.focus.index, 1)
@@ -189,7 +190,7 @@ class KeyBindingUITests(ProjectFixture):
         app = self.tasks({})
         app.explorer.apply({'boards': [test_squares.board([
             test_squares.card('alpha', 'Building'), test_squares.card('beta', 'Building')])],
-            'customization': {'keybindings': {'left': ['h'], 'right': ['l'], 'open': ['o'], 'togglePreview': ['v']},
+            'customization': {'keybindings': {'left': ['h'], 'right': ['l'], 'open': ['o'], 'togglePreview': ['v'], 'toggleSelection': []},
                               'boardColumns': [{'title': 'Board', 'field': 'name', 'width': 12},
                                                {'title': 'Tasks', 'field': 'task_squares', 'width': 5}]}})
         app.view = 'boards'

@@ -8,7 +8,23 @@ WHEEL_UP = curses.BUTTON4_PRESSED
 # This bit is only a normalized wheel-down value in the SGR adapter. Legacy
 # getmouse() aliases wheel-down, horizontal wheels, and motion to this same bit.
 WHEEL_DOWN = getattr(curses, 'BUTTON5_PRESSED', curses.REPORT_MOUSE_POSITION)
+# Internal SGR flag, outside ncurses' mouse bit range. On four-button builds,
+# REPORT_MOUSE_POSITION aliases wheel-down and must never represent a drag.
+LEFT_DRAG = 1 << 32
 WHEEL_GESTURE_GAP = 0.2
+
+
+def is_left_drag(buttons):
+    native_motion = curses.REPORT_MOUSE_POSITION if hasattr(curses, 'BUTTON5_PRESSED') else 0
+    return bool(buttons & (LEFT_DRAG | native_motion))
+
+
+def native_button_motion(enabled, output=None):
+    output = output if output is not None else sys.stdout
+    # ncurses requests all motion with REPORT_MOUSE_POSITION. Ask the terminal
+    # for held-button motion only, leaving ordinary pointer movement quiet.
+    output.write('\x1b[?1003l\x1b[?1002h' if enabled else '\x1b[?1002l')
+    output.flush()
 
 
 class WheelGesture:
@@ -54,6 +70,10 @@ def decode_sgr(sequence):
             buttons = curses.BUTTON1_PRESSED
         elif button == 2:
             buttons = curses.BUTTON3_PRESSED
+        elif button == 32:
+            buttons = LEFT_DRAG
+    elif button == 0:
+        buttons = curses.BUTTON1_RELEASED
     if buttons:
         for bit, modifier in ((4, curses.BUTTON_SHIFT), (8, curses.BUTTON_ALT), (16, curses.BUTTON_CTRL)):
             if code & bit:
@@ -78,11 +98,11 @@ class SgrMouseInput:
     def start(self):
         # Disable the legacy decoder before requesting SGR packets directly.
         curses.mousemask(0)
-        self.output.write('\x1b[?1000h\x1b[?1006h')
+        self.output.write('\x1b[?1000h\x1b[?1002h\x1b[?1006h')
         self.output.flush()
 
     def close(self):
-        self.output.write('\x1b[?1006l\x1b[?1000l')
+        self.output.write('\x1b[?1006l\x1b[?1002l\x1b[?1000l')
         self.output.flush()
 
     def getmouse(self):

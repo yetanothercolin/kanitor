@@ -31,13 +31,14 @@ git clone https://github.com/yetanothercolin/kanitor.git
 cd kanitor
 npm install --global '@basementuniverse/kanbn@^2.6.1'
 uv sync
-uv run python -m kanitor                       # discover a workspace from this directory
-uv run python -m kanitor --root /path/to/project
 uv run python -m kanitor --root examples/demo   # populated example with two boards
+uv run python -m kanitor --root /path/to/project
 ```
 
 Run from this checkout and pass `--root` to explore other projects. An
 interactive terminal of at least 60 columns and 16 rows is required.
+To browse this repository's own feature boards, initialize its local-only main
+board as described under [Development](#development).
 The TUI has been tested in a macOS terminal with curses. Linux terminal behavior
 and work-log locking have not been tested.
 
@@ -262,7 +263,9 @@ or records agent activity.
 
 The main pane starts with boards, most recently updated first. Board recency is
 the latest of its board file modification time and its tasks' valid `updated`
-dates. Task lists start in native kanbn column/card order. `--board` opens a
+dates. Task lists group by native status order, then newest `metadata.updated`
+first within each status. Missing/invalid dates go last; ties retain native
+order. Explicit column sorts override this; Reset restores it. `--board` opens a
 board directly. The title follows your location, such as `index * All statuses`.
 Enter or Space opens the focused row; Escape steps back through the hierarchy.
 
@@ -279,12 +282,13 @@ Enter or Space opens the focused row; Escape steps back through the hierarchy.
 | p | Show/hide the focused ticket description preview |
 | a | Show/hide Activity |
 | Tab / Shift+Tab | Switch main-list / Activity focus |
+| r | Toggle pane resizing mode |
 | PageUp / PageDown, Home / End | Navigate lists or scroll details |
 | Shift+Up / Shift+Down | Jump ten items, or ten lines in details/help |
 | Shift+Left / Shift+Right | Move one cell, or jump five task squares |
 | Ctrl+Shift+Up / Ctrl+Shift+Down | Jump one full visible page |
 | / | Search task titles, IDs, descriptions, statuses, and metadata |
-| r | Refresh immediately |
+| R | Refresh immediately |
 | ? | Show help |
 | q | Close details/help or quit |
 
@@ -299,11 +303,34 @@ Only actively filtered headers display `▾`, directly beside the title. An arro
 marks the active sort; the status line also names it, including hidden columns.
 
 The selected board's task list includes a description preview below it. Press
-`p` to collapse or expand the preview. It always occupies eight rows including
-its border, follows the selected task, and never takes focus or handles mouse
-input. The full description text wraps within the pane; long descriptions are
-clipped with an ellipsis. Open the card to read the whole description. Preview
+`p` to collapse or expand the preview. It defaults to eight rows including
+its border, follows the selected task, and never takes keyboard focus.
+When enabled, the pane stays present even when there is no task to
+preview, showing an empty message so the list does not shift. This also applies
+to Boards, Projects, and Activity previews. A fixed metadata line and divider
+separate task context from the description. Scroll over the pane with the wheel
+or trackpad, or click above/below its scrollbar thumb, to read the entire body.
+Scrolling does not change task selection. Lists wrap with hanging indentation,
+aligning continuation text after their bullet, number, or checkbox. Very short
+previews omit the metadata line to leave room for text. Preview
 is automatically hidden below 19 terminal rows and returns when space permits.
+
+Press `r` in Projects, Boards, or Tasks to enter resize mode. Dividers appear
+between visible panes, with the active divider highlighted. Tab/Shift+Tab cycles
+between dividers; Up/Down moves the active divider one row. Click a divider to
+focus it, or hold the left mouse button and drag it up or down. Release to save
+the position. Press `r`, Escape, or Enter to finish. The list selection stays put
+while resizing.
+
+Divider positions are absolute: moving one changes only the panes immediately
+above and below it. The main list and Activity keep at least five rows;
+Preview keeps at least three. Initially, Activity and Preview each use eight
+rows where space permits, and the main list takes the remaining space. Edited
+positions and lower-pane dimensions are shared across Projects and its child
+Boards/Tasks views, and persist in the viewer workspace's
+`.kanitor/view-state.json`. Preview keeps its height when Activity is absent.
+Terminal shrinkage temporarily clamps positions;
+enlarging restores them. With no visible lower panes there is no divider to move.
 
 Overflowing lists, dropdowns, details, and help show a scrollbar. Its thumb
 shows the visible portion and current position; click above or below it to
@@ -326,7 +353,12 @@ The top bar follows the current page: `KANITOR / project` in the boards list,
 
 ## Activity pane
 
-Press `a` to show or hide Activity below the main list. While it is visible,
+Press `a` to show or hide Activity below the main list. Its visibility is saved
+immediately in the workspace's local
+`.kanitor/view-state.json` and restored next time. The parent Projects view and
+each individual project remember their own choice. Missing or unreadable
+preferences use the default (hidden); save failures do not prevent browsing.
+While Activity is visible,
 Tab or Shift+Tab switches focus between the main list and Activity. Mouse clicks
 can also focus a ticket. Up/Down, ten-item jumps, page keys, Home/End, wheel input
 and its scrollbar navigate activity rows. Left/Right selects a cell; Up from the
@@ -335,28 +367,48 @@ opens that destination; on a task name, description, or ID it opens the exact
 ticket. Closing details restores the previous browsing context. Enter/Space on
 Assigned or another filterable value filters Activity to that value. Escape
 returns focus to the main list, and `p` toggles the activity ticket's preview.
+While Activity is focused, the status row shows its counts, filters, sort, or
+errors; the footer shows the contextual navigation shortcuts once.
 
-Activity shows native in-progress tickets, independently of main-table filters:
+Activity shows native in-progress and recently completed tickets, independently
+of main-table filters:
 
 | View | Tickets shown | Context columns |
 | --- | --- | --- |
 | Projects | All declared projects | Project and board |
 | Boards | All boards in the current project | Board |
-| Tasks | The current board | Current breadcrumb supplies context |
+
+Activity is available only in Projects and Boards. Tasks has no Activity pane,
+toggle, or Tab focus target; returning to a summary view restores its visibility
+preference.
 
 Each ticket appears once per project, even if it belongs to multiple active
 boards. Selection follows task IDs through live refresh, and the focused ticket's
-full description uses the existing eight-row preview area.
+full description uses the existing preview area, initially eight rows tall.
 
-**Elapsed** is the live age of the latest **open Kanitor work session** linked to
+Active tickets stay above completed tickets. Completed tickets appear newest
+completion first, with dimmer text. Recency uses `taskSquares.recentCompleted`
+from the project's effective configuration (24 hours by default), with completion
+dates taken from native metadata or workflow history. Old, undated, and future
+completions are omitted. Active membership takes precedence when a ticket is
+also complete on another board. Column sorting reorders active tickets; completed
+tickets retain completion order. Filters apply to both groups.
+
+For active tickets, **Elapsed** is the live age of the latest **open Kanitor work session** linked to
 that exact ticket. It does not count time since entering In Progress or add
 previous sessions together. Current phase labels appear in Activity, falling back
 to the session label. Closed/interrupted sessions do not keep ticking. Tickets
 without an open session show `—` and “No open session”; unavailable work data is
 marked stale and does not produce a live counter. This display creates no work
 events and changes no ticket metadata or recorded duration.
+Completed tickets show “Completed” and the sum of confirmed elapsed time from
+all work sessions linked to that exact ticket and project. This includes effective
+timing amendments. An unknown-ended session contributes no invented duration;
+`≥` marks a known subtotal when some timing is unknown. With no known timing,
+elapsed is `—`. Completed totals never tick. They retain previews and contextual
+actions.
 
-Activity occupies up to eight rows, shrinking on short screens. Previews with
+Activity defaults to eight rows, shrinking on short screens. Previews with
 Activity need at least 25 terminal rows; the list remains usable down to the usual
 16-row minimum. Activity and its focus are retained while opening task details.
 
@@ -366,13 +418,14 @@ Customize the columns with the top-level `activityColumns` array:
 activityColumns:
   - {title: Project, field: project, width: "hug,18"}
   - {title: Board, field: board, width: "hug,18"}
+  - {title: "", field: status_square, width: hug}
   - {title: Elapsed, field: elapsed, width: hug}
   - {title: Activity, field: activity, width: "hug,24"}
   - {title: Owner, metadata: assignee, width: hug}
   - {title: Task, field: task, width: fill}
 ```
 
-Fields: `project`, `board`, `slug`, `id`, `task`, `description`, `status`, `assigned`,
+Fields: `project`, `board`, `slug`, `id`, `task`, `description`, `status_square`, `status`, `assigned`,
 `activity`, `session` (session label), `started_at` (session start), `elapsed`.
 Metadata reads the ticket's exact metadata key. `board` shows the board's display
 name; `slug` shows its native slug. Both open that board when activated. Project
@@ -382,7 +435,8 @@ to the available width. The normal title/width/minTerminalWidth/date-format rule
 apply; elapsed uses aligned day/hour/minute/second slots. Select a header and
 press Enter/Space, or use `f`/right-click on a cell, for its filter and sort menu.
 Activity columns default to filterable and sortable; elapsed supports sorting
-only. Set `filterable: false` or `sortable: false` to disable a capability, and
+only, and `status_square` is a visual indicator with neither capability.
+Set `filterable: false` or `sortable: false` to disable a capability, and
 use `filterType` to choose enum, string, or date filtering. Filters and sorting
 affect Activity independently of the main list and reset when its view/board
 scope changes. Workspace settings govern the Projects pane; project settings
@@ -410,6 +464,8 @@ Each entry replaces that action's default keys. Omitted actions keep their
 built-in defaults; `[]` disables an action's shortcut. A single string also
 works, such as `help: F1`. Action names are case-sensitive. Literal characters
 preserve case (`Q` differs from `q`); named keys are case-insensitive.
+To keep refresh on `r`, also rebind resizing, for example
+`toggleResize: F4` and `refresh: r`.
 
 | Action | Default keys |
 | --- | --- |
@@ -423,8 +479,10 @@ preserve case (`Q` differs from `q`); named keys are case-insensitive.
 | `columnMenu`, `statusFilter` | `f` / `s` |
 | `togglePreview` | `p` |
 | `toggleActivity`, `focusPane` | `a` / `tab`, `shift+tab` |
+| `toggleResize` | `r` |
+| `toggleSelection`, `copySelection` | `v` / `y` |
 | `previousBoard`, `nextBoard` | `[` / `]`, `b` |
-| `search`, `refresh`, `help`, `quit` | `/` / `r` / `?` / `q` |
+| `search`, `refresh`, `help`, `quit` | `/` / `R` / `?` / `q` |
 
 Supported keys include printable characters, arrows, `home`, `end`, `pageup`,
 `pagedown`, `enter`, `escape`, `space`, `tab`, `shift+tab`, `backspace`, `delete`,
@@ -452,6 +510,22 @@ remain fixed. Thus a letter bound to Open or Quit still types normally in an
 editor. Left closes details using its configured keys. Space pages details/help
 while it remains bound to Open; configure `pageDown` for other scrolling keys.
 
+Press `v` in any view, including task details and Help, to select visible text.
+Drag with the left mouse button to highlight; arrow keys extend the selection.
+Press `y` or Enter to copy, or `v`/Escape to cancel. Selection freezes the visible
+text while background readers keep watching; leaving the mode shows live data
+again. Mouse actions select text without opening rows or dragging pane dividers.
+Only displayed text is copied, including any selected table borders or headings;
+scroll to the desired content before starting selection. Resizing the terminal
+cancels selection. Text editors and resize mode retain their own input controls.
+
+On macOS copying uses `pbcopy`. Other systems request the clipboard through the
+terminal's OSC 52 support, which must be enabled; tmux also needs clipboard
+passthrough enabled. Kanitor reports a terminal clipboard request without being
+able to confirm whether the terminal accepted it. Clipboard command failures
+keep the selection available for retry. `toggleSelection` and `copySelection`
+are configurable; free their default keys before assigning `v` or `y` elsewhere.
+
 Workspace bindings govern Projects. On entering a project, its effective config
 supplies its bindings, including existing workspace inheritance when it has no
 local config. A local config replaces workspace inheritance as a whole; omitted
@@ -466,6 +540,7 @@ instead of the default `assigned` field:
 
 ```yaml
 columns:
+  - {title: "", field: status_square, width: hug}
   - {title: Status, field: status, width: hug}
   - {title: Updated, metadata: updated, width: hug, format: "%Y-%m-%d %H:%M"}
   - {title: Assignee, metadata: assignee, width: hug, filterable: true}
@@ -475,7 +550,7 @@ columns:
 The array replaces the default layout. `title` is the displayed heading and
 may be an empty string (`title: ""`) to leave a column unlabeled;
 `metadata` is an exact, case-sensitive ticket metadata key, including literal
-dots or spaces. Alternatively, `field` selects `status`, `task`, `id`, or
+dots or spaces. Alternatively, `field` selects `status_square`, `status`, `task`, `id`, or
 `description`. Each rule specifies exactly one of `field` and `metadata`.
 `width` accepts a fixed integer of at least 4 terminal cells, `"hug"` to fit
 the heading and values in all matching rows, or `"fill"` to share the remaining
@@ -490,9 +565,18 @@ as `—`; arrays and objects display
 as JSON. Status headers keep their checkbox filter when renamed or reordered;
 `s` still opens it if the status column is omitted.
 
-The default layout is Status, Updated, Assigned (on terminals at least 90 cells
+The default layout is a status square, Status, Updated, Assigned (on terminals at least 90 cells
 wide), and Description. Updated reads `metadata.updated` and displays local time
 as `2026-10-23 16:01`.
+
+`status_square` is the single task indicator formerly fixed at the left of
+the task list. It uses the [shared square styles](#task-squares-and-project-columns)
+also used by `task_squares`. It is a normal selectable
+column in Tasks and Activity: omit it to remove the square, or move it anywhere
+in the array. An empty title and `width: hug` keep it one cell wide. It uses the
+board's native workflow and the project's `taskSquares` recency rules, and supports
+neither filtering, sorting, nor date formats; use a `status` column for status actions.
+Activating a task's square opens that task in either view.
 
 ### Width constraints
 
@@ -679,6 +763,14 @@ but remain in task lists and counts.
 | Dim hollow green `□` | Previously started, incomplete, and outside the board's in-progress columns |
 | Hollow white `□` | Never started and created within 24 hours |
 | Dim hollow white `□` | Older task that never started |
+| Dim solid green `■` | Older/undated completion; detailed rows only, omitted from compact summaries |
+
+This catalogue applies to `status_square` in Tasks/Activity and `task_squares`
+in Boards/Projects. Completed tasks always use solid glyphs; hollow means
+incomplete. Active squares use three gentle brightness levels over a 2.8-second
+cycle. Focus adds a reverse/bold highlight to the glyph and clears dimming without
+changing its status color; surrounding padding stays plain. Activity's historical
+text is dimmed independently and does not alter square styling.
 
 Native `startedColumns`/`completedColumns` determine current workflow. Native
 dates and start/move history supply timing and evidence of prior starts. A task
@@ -697,7 +789,8 @@ Removed tasks and completions that age past the cutoff disappear. Resizing
 rewraps the same ordering; reopening the view builds a fresh order.
 
 Rows grow to fit their squares. Click an individual square to select its task
-and reveal an eight-row preview below the list. Double-click the square, or
+and show its description in the preview below the list (eight rows by default).
+Double-click the square, or
 press Enter while it is selected, to open that exact task's details. Closing
 details returns to the originating Boards or Projects list. Project squares
 resolve to the board membership represented by that square, including shared
@@ -714,7 +807,9 @@ A shorter line preserves that preferred position; an empty row receives cell
 focus. Shift+Up/Down jumps ten tasks; page keys move a visible page. Home/End
 selects the first/last square. Shift+Left/Right jumps five squares, clamping at
 the ends before another jump exits the column. Enter/Space opens the selected task, Escape goes
-back, and `p` toggles its eight-row preview. The preview ignores mouse input and
+back, and `p` toggles the preview, even without a selected square.
+An enabled preview keeps its space when focus leaves the squares or no task
+is available. The preview supports wheel/trackpad and scrollbar reading without taking keyboard focus, and
 hides below 19 terminal rows. Wheel input, page keys, and scrollbars reach every
 line, including rows taller than the terminal. Active squares brighten/dim over
 a slow cycle; other squares remain steady. Age classifications update without edits.
@@ -750,9 +845,9 @@ fixed/`hug`/`fill` widths are supported. Scalar fields accept `filterable`,
 Omit the setting to restore defaults.
 For a board's Squares column, configure `boardColumns` in that project's own
 config. `taskSquares` thresholds accept positive durations in `s`, `m`, `h`,
-`d`, `w`, or `y`; all three are optional. Parent settings govern Projects,
-and each child's effective settings govern its Boards view, using workspace
-defaults when that child has no local configuration.
+`d`, `w`, or `y`; all three are optional. Each project's effective settings govern
+its squares in every view, including Projects, using workspace defaults when
+that child has no local configuration.
 
 ## Guidance for agents
 
@@ -777,17 +872,40 @@ Boards without those settings have no inferred completed or active columns.
 
 The TUI checks relevant file fingerprints, including all three supported Kanitor
 configuration filenames, every half second and starts a bounded
-background read only when something changes, on an error retry, or when `r` is
+background read only when something changes, on an error retry, or when `R` is
 pressed. Reads interrupted by file changes are discarded and retried. The
 selected board and card are preserved when still present. Read errors are
 visible; a previous successful snapshot is explicitly marked **STALE** until
-the reader recovers. `--once` and `--json` exit with status 1 on read failure.
+the reader recovers. A malformed or missing task is omitted individually: other
+tasks and boards remain browsable, and **PARTIAL** identifies incomplete data.
+The status line names the task and board with kanbn's error; fixing the file
+restores the task automatically. Counts and squares include only readable tasks.
+`--once` lists every skipped task; `--json` includes a `warnings` array of
+`board`, `task`, and `error` objects in each native snapshot, including project
+snapshots. Both commands still print usable partial data but exit with status 1
+when tasks were skipped or a read failed. Board/configuration failures retain
+the last good snapshot rather than replacing it with partial board definitions.
 
-Kanitor never edits board or card files. Browsing stores no workspace preferences
-or caches; `--init-yml` explicitly creates configuration. Use kanbn to create,
+Kanitor never edits board or card files. Explicit Activity toggles and pane resizing save local
+view preferences in `.kanitor/view-state.json`; keep this file out of Git.
+`--init-yml` explicitly creates configuration. Use kanbn to create,
 move, and edit cards.
 
 ## Development
+
+This repository keeps its Workflow & Tooling board and cards local to each
+checkout. Other feature boards remain in Git. After cloning, initialize the
+ignored main board before inspecting the repository's own kanbn tasks:
+
+```sh
+kanbn init --name 'Workflow & Tooling' \
+  --description 'Local repository workflow and tooling' \
+  --column Backlog --column Todo --column 'In Progress' --column Done
+```
+
+Run this only when `.kanbn/index.md` is absent. It preserves the existing feature
+boards. When adding a local Workflow & Tooling card, add its exact path to the
+corresponding `.gitignore` block; kanbn boards share a task directory.
 
 `uv run python -m unittest discover -s tests -v` checks model behavior, terminal
 layout and input handling, and the native reader against temporary workspaces.

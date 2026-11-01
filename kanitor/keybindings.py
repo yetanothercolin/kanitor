@@ -17,7 +17,9 @@ DEFAULT_KEYS = {
     'columnMenu': ('f',), 'statusFilter': ('s',), 'togglePreview': ('p',),
     'toggleActivity': ('a',), 'focusPane': ('tab', 'shift+tab'),
     'previousBoard': ('[',), 'nextBoard': (']', 'b'),
-    'search': ('/',), 'refresh': ('r',), 'help': ('?',), 'quit': ('q',),
+    'toggleResize': ('r',),
+    'toggleSelection': ('v',), 'copySelection': ('y',),
+    'search': ('/',), 'refresh': ('R',), 'help': ('?',), 'quit': ('q',),
 }
 
 ACTION_DESCRIPTIONS = {
@@ -31,8 +33,11 @@ ACTION_DESCRIPTIONS = {
     'pageUp': 'Previous visible page', 'pageDown': 'Next visible page',
     'columnMenu': 'Column actions', 'statusFilter': 'Task Status checkbox filter',
     'togglePreview': 'Show/hide description preview',
-    'toggleActivity': 'Show/hide in-progress activity',
-    'focusPane': 'Switch main table / activity focus',
+    'toggleActivity': 'Show/hide active and recently completed tickets',
+    'focusPane': 'Switch pane / resize divider focus',
+    'toggleResize': 'Toggle pane resizing mode',
+    'toggleSelection': 'Toggle visible text selection mode',
+    'copySelection': 'Copy highlighted text in selection mode',
     'previousBoard': 'Previous board', 'nextBoard': 'Next board',
     'search': 'Search tasks', 'refresh': 'Refresh files', 'help': 'Help',
     'quit': 'Close menu/help/details or quit',

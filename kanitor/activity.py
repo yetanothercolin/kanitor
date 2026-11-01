@@ -1,51 +1,79 @@
-"""Read-only in-progress tickets, live work-session timing, and pane interaction."""
+"""Active and recently completed tickets, work-session timing, and interaction."""
 import curses
 import time
 from collections import Counter
+from math import isfinite
 from pathlib import Path
 
 from .config import layout_columns
 from .cell_ui import CellFocus
 from .model import Explorer, state
 from .mouse import WHEEL_DOWN, WHEEL_UP
-from .squares import date_seconds
+from .squares import classify, date_seconds
 from .table_state import Criterion, TableState
 
 
+def recorded_duration(session):
+    """Use confirmed timing; an open or unknown-ended session has no duration."""
+    if session.get('state') == 'open':
+        return None
+    value = session.get('confirmed_session_elapsed_ms')
+    if 'confirmed_session_elapsed_ms' not in session:
+        start, end = date_seconds(session.get('started_at')), date_seconds(session.get('ended_at'))
+        value = (end - start) * 1000 if start is not None and end is not None else None
+    return value if type(value) in (int, float) and isfinite(value) and value >= 0 else None
+
+
 def activity_rows(sources, board_slug=None, now=None):
-    """One row per project/task, with the newest declared open session only."""
+    """Active tasks first, then recent native completions; one row per project/task."""
     now = time.time() if now is None else now
     result = []
     for source in sources:
         work = source.work_reader
         sessions = {}
+        linked_sessions = {}
         for session in (work.snapshot or {}).get('sessions', ()):
             subject = session.get('subject') or {}
-            if session.get('state') != 'open' or subject.get('provider') != 'kanbn':
+            if subject.get('provider') != 'kanbn':
+                continue
+            linked_sessions.setdefault(subject.get('ref'), []).append(session)
+            if session.get('state') != 'open':
                 continue
             started = date_seconds(session.get('started_at'))
             rank = (started if started is not None else float('-inf'), session.get('created_seq', 0))
             ref = subject.get('ref')
             if ref not in sessions or rank > sessions[ref][0]:
                 sessions[ref] = rank, session
-        seen = set()
+        tasks = {}
         for board in source.explorer.boards:
             if board_slug is not None and board['slug'] != board_slug:
                 continue
             for task in board['tasks']:
-                if task['id'] in seen or state(board, task['column']) != 'active':
+                workflow = state(board, task['column'])
+                historical = workflow == 'done'
+                completion = classify(board, task, {}, now, source.explorer.column_rules.square_rules) if historical else None
+                if workflow != 'active' and completion is None:
                     continue
-                seen.add(task['id'])
-                entry = sessions.get(task['id'])
+                previous = tasks.get(task['id'])
+                if previous and (not previous['historical'] or
+                                 (historical and previous['completed_at'] >= completion.at)):
+                    continue
+                entry = sessions.get(task['id']) if not historical else None
                 session = entry[1] if entry else None
                 start = date_seconds(session.get('started_at')) if session else None
                 elapsed = (now - start) * 1000 if start is not None and now >= start and not work.error else None
+                partial = False
+                if historical and not work.error:
+                    durations = [recorded_duration(item) for item in linked_sessions.get(task['id'], ())]
+                    known = [value for value in durations if value is not None]
+                    elapsed = sum(known) if known else None
+                    partial = len(known) < len(durations)
                 phases = session.get('phases', ()) if session else ()
                 phase = next((phase for phase in reversed(phases) if phase.get('state') == 'open'), None)
-                label = (phase or session or {}).get('label') or 'No open session'
-                if work.error:
+                label = 'Completed' if historical else (phase or session or {}).get('label') or 'No open session'
+                if work.error and not historical:
                     label = 'Work unavailable'
-                result.append({
+                tasks[task['id']] = {
                     'key': (str(source.root), task['id']), 'id': task['id'],
                     'project': Path(source.project_label or source.root.name).name,
                     'board': board.get('name') or board['slug'], 'slug': board['slug'], 'name': task['name'],
@@ -54,11 +82,16 @@ def activity_rows(sources, board_slug=None, now=None):
                     'activity': label, 'session': session.get('label', '') if session else '',
                     'started_at': session.get('started_at') if session else None,
                     'elapsed': elapsed, 'live': session is not None and not work.error,
+                    'elapsed_partial': partial,
+                    'historical': historical, 'completed_at': completion.at if completion else None,
                     'source': source, 'native_board': board, 'task': task,
                     'stale': bool(work.error or source.reader.error),
-                })
+                }
+        result.extend(tasks.values())
     # Stable native/project ties, without reshuffling rows on each clock tick.
-    return sorted(result, key=lambda row: (not row['live'], -(date_seconds(row['started_at']) or 0)))
+    return sorted(result, key=lambda row: (row['historical'],
+                  -row['completed_at'] if row['historical'] else 0,
+                  not row['live'], -(date_seconds(row['started_at']) or 0)))
 
 
 class ActivityPane:
@@ -109,8 +142,16 @@ class ActivityPane:
 
 class ActivityUI:
     @property
+    def activity_available(self):
+        return self.view in ('projects', 'boards')
+
+    @property
+    def activity_visible(self):
+        return self.activity_available and self.activity.shown
+
+    @property
     def main_pane_focused(self):
-        return not self.activity.focused
+        return (not self.activity_visible or not self.activity.focused) and not self.resize_mode
 
     def activity_sources(self):
         return list(self.children.values()) if self.view == 'projects' else [self]
@@ -122,7 +163,11 @@ class ActivityUI:
                 and not (c.canonical_field in ('board', 'slug') and self.view == 'tasks')]
 
     def refresh_activity(self):
-        if self.activity.shown and not self.popup:
+        if not self.activity_available:
+            self.activity.focused = False
+            self.activity.rect = None
+            return
+        if self.activity_visible and not self.popup:
             board = self.explorer.board_slug if self.view == 'tasks' else None
             pane = self.activity
             scope = (self.view, board)
@@ -131,7 +176,11 @@ class ActivityUI:
             columns = self.activity_columns()
             pane.state.reconcile(columns)
             pane.universe = activity_rows(self.activity_sources(), board)
-            pane.reconcile(pane.state.apply(pane.universe, columns), scope)
+            rows = pane.state.apply(pane.universe, columns)
+            # Explicit column sorting applies within the active group. History
+            # always follows it in completion order, regardless of that sort.
+            rows.sort(key=lambda row: (row['historical'], -row['completed_at'] if row['historical'] else 0))
+            pane.reconcile(rows, scope)
             if not pane.rows:
                 pane.focus.header = True
             if self.column_menu and self.column_menu.get('table') == 'activity':
@@ -156,7 +205,7 @@ class ActivityUI:
             return [('Open project', 'openProject')]
         if column.canonical_field in ('board', 'slug'):
             return [('Open board', 'openBoard')]
-        if column.canonical_field in ('task', 'description', 'id'):
+        if column.canonical_field in ('task', 'description', 'id', 'status_square'):
             return [('Open task', 'openTask')]
         return []
 
@@ -204,7 +253,7 @@ class ActivityUI:
             source.selected_square = None
             source.cell_columns = []
             source.needs_redraw = self.needs_redraw = True
-        elif column.canonical_field in ('task', 'description', 'id'):
+        elif column.canonical_field in ('task', 'description', 'id', 'status_square'):
             pane.selected = row['key']
             self.open_activity_task()
         elif column.can_filter:
@@ -214,25 +263,14 @@ class ActivityUI:
 
     def poll_activity_clock(self):
         current = None
-        if self.activity.shown and not self.popup:
+        if self.activity_visible and not self.popup:
             rules = self.catalog.rules if self.view == 'projects' else self.explorer.column_rules
-            if any(row['live'] for row in self.activity.rows) or any(column.is_date for column in rules.activity_columns):
+            if (any(row['live'] or row['historical'] for row in self.activity.universe)
+                    or any(column.is_date for column in rules.activity_columns)):
                 current = int(time.time())
         if current != self._activity_clock:
             self.needs_redraw = True
             self._activity_clock = current
-
-    def pane_layout(self, preview):
-        """Keep the existing eight-row preview, shrinking Activity on short screens."""
-        available = self.screen.getmaxyx()[0] - 5
-        if not self.activity.shown:
-            return available - 9 if preview else available, None, 3 + available - 8 if preview else None
-        preview = preview and available >= 20  # Five rows each for the two lists.
-        activity_height = min(8, available - 6 - (9 if preview else 0))
-        main_height = available - activity_height - 1 - (9 if preview else 0)
-        activity_top = 3 + main_height + 1
-        preview_top = activity_top + activity_height + 1 if preview else None
-        return main_height, (activity_top, activity_height), preview_top
 
     def draw_activity(self, y, height):
         from .ui import pad
@@ -241,7 +279,8 @@ class ActivityUI:
         pane.rect = y, 1, height, width - 2
         pane.hits = []
         stale = any(row['stale'] for row in pane.rows)
-        self.frame(y, height, 'Activity' + (' · STALE' if stale else ''), pane.focused)
+        pane_focused = pane.focused and not self.resize_mode
+        self.frame(y, height, 'Activity' + (' · STALE' if stale else ''), pane_focused)
         pane.cell_hits, pane.header_hits = [], []
         columns, _ = layout_columns(self.activity_columns(), width, width - 7, pane.rows,
                                     filtered=pane.state.filters, sorting=pane.state.sort)
@@ -260,7 +299,7 @@ class ActivityUI:
             order = pane.state.sort[1] if pane.state.sort and pane.state.sort[0] == column.key else None
             label = column.heading(column.key in pane.state.filters, order)
             attr = self.attr('cyan') | curses.A_BOLD
-            if pane.focused and pane.focus.header and pane.focus.index == index:
+            if pane_focused and pane.focus.header and pane.focus.index == index:
                 attr |= curses.A_REVERSE
             self.put(y + 1, x, pad(label, size, right=column.is_duration), attr)
             pane.header_hits.append((y + 1, x, size, index))
@@ -269,23 +308,31 @@ class ActivityUI:
         pane.ensure_visible()
         for offset, row in enumerate(pane.rows[pane.top:pane.top + pane.capacity]):
             screen_y = y + 2 + offset
-            focused = pane.focused and not pane.focus.header and row['key'] == pane.selected
+            focused = pane_focused and not pane.focus.header and row['key'] == pane.selected
             if focused:
                 self.put(screen_y, 2, '⟦', self.attr('cyan'))
                 self.put(screen_y, width - 4, '⟧', self.attr('cyan'))
             x = 3
             for index, (column, size) in enumerate(columns):
+                if column.field == 'status_square':
+                    square = row['source'].task_square(row['native_board'], row['task'])
+                    self.draw_square(screen_y, x, square, focused=focused and index == pane.focus.index)
+                    pane.cell_hits.append((screen_y, x, size, row['key'], index))
+                    x += size + 1
+                    continue
                 value = column.value(row)
                 if column.is_duration:
                     value = value.lstrip()
                 color = self.attr('cyan') if column.is_duration else 0
+                if row['historical'] and not (focused and index == pane.focus.index):
+                    color = self.attr('dim')
                 attr = color | (curses.A_REVERSE | curses.A_BOLD if focused and index == pane.focus.index else 0)
                 self.put(screen_y, x, pad(value, size, right=column.is_duration), attr)
                 pane.cell_hits.append((screen_y, x, size, row['key'], index))
                 x += size + 1
             pane.hits.append((screen_y, row['key']))
         if not pane.rows:
-            self.put(y + 2, 3, 'No tickets match Activity filters.' if pane.state.filters else 'No tickets in progress.', self.attr('dim'), width - 7)
+            self.put(y + 2, 3, 'No tickets match Activity filters.' if pane.state.filters else 'No active or recently completed tickets.', self.attr('dim'), width - 7)
         self.draw_scrollbar(y + 2, width - 3, pane.capacity, len(pane.rows), pane.capacity, pane.top, 'activity')
 
     def activity_preview(self, y):
@@ -293,9 +340,7 @@ class ActivityUI:
         if row:
             self.draw_square_preview(y, (row['source'], row['native_board'], row['task']))
         else:
-            self.frame(y, 8, 'Task preview')
-            self.preview_rect = y, 1, 8, self.screen.getmaxyx()[1] - 2
-            self.put(y + 1, 4, 'No in-progress ticket selected.', self.attr('dim'))
+            self.draw_task_preview(y, None, empty='No Activity ticket selected.')
 
     def open_activity_task(self):
         row = self.activity.current
@@ -338,15 +383,21 @@ class ActivityUI:
         pane = self.activity
         pane.last_click = None
         action = self.bindings.action(key)
+        if not self.activity_available:
+            pane.focused = False
+            return action in ('toggleActivity', 'focusPane')
         if action == 'toggleActivity':
             pane.shown = not pane.shown
+            error = self.view_state.set_flag('activityVisible', pane.shown)
+            if error:
+                self.notice = error
             if not pane.shown:
                 pane.focused = False
                 pane.rect = None
             self.refresh_activity()
             return True
         if action == 'focusPane':
-            if pane.shown:
+            if self.activity_visible:
                 pane.focused = not pane.focused
                 if pane.focused:
                     pane.preview_shown = True
@@ -389,7 +440,7 @@ class ActivityUI:
             pane.preview_shown = not pane.preview_shown
         return True
 
-    def activity_status(self):
+    def activity_footer(self):
         key = self.bindings.label
         status = (f"{key('up', True)} {key('down', True)} tickets · {key('open')} opens · "
                   f"{key('focusPane', True)} main table · {key('toggleActivity', True)} hide")
@@ -397,18 +448,29 @@ class ActivityUI:
         if pane.columns:
             column = pane.columns[pane.focus.index][0]
             verb = ('column menu' if pane.focus.header else 'project' if column.canonical_field == 'project' else
-                    'board' if column.canonical_field in ('board', 'slug') else 'task' if column.canonical_field in ('task', 'description', 'id') else
+                    'board' if column.canonical_field in ('board', 'slug') else 'task' if column.canonical_field in ('task', 'description', 'id', 'status_square') else
                     'filter value' if column.can_filter else 'column menu')
             status = f"{key('left', True)} {key('right', True)} cells · {key('open')} {verb} · {key('columnMenu', True)} actions · {key('focusPane', True)} table"
+        return status
+
+    def activity_status(self):
+        pane = self.activity
+        completed = sum(row['historical'] for row in pane.rows)
+        parts = [f'Activity · {len(pane.rows) - completed} active · {completed} completed']
         if pane.state.filters:
-            status = f'{len(pane.state.filters)} Activity filters · ' + status
+            count = len(pane.state.filters)
+            parts.append(f"{count} filter{'s' if count != 1 else ''}")
         if pane.state.sort:
             column = next((c for c in self.activity_columns() if c.key == pane.state.sort[0]), None)
             if column:
-                status = f"Sort: {column.label} {'↓' if pane.state.sort[1] else '↑'} · " + status
+                parts.append(f"Sort: {column.label} {'↓' if pane.state.sort[1] else '↑'}")
+        if any(source.work_reader.error for source in self.activity_sources()):
+            parts.insert(0, 'Work unavailable')
+        if any(source.reader.error for source in self.activity_sources()):
+            parts.insert(0, 'STALE')
         if self.activity.focused and self.activity.preview_shown and self.screen.getmaxyx()[0] < 25:
-            status = 'Preview needs 25 rows with Activity · ' + status
-        return status
+            parts.insert(0, 'Preview needs 25 rows with Activity')
+        return ' · '.join(parts)
 
     def handle_activity_mouse(self, x, y, buttons):
         pane = self.activity

@@ -6,7 +6,7 @@ import time
 
 from .config import ColumnRules, ConfigError, parse_config
 from .config_file import config_path, load_document
-from .reader import ReadError, read_once
+from .reader import ReadError, read_once, warning_messages
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,8 @@ def plain_projects(snapshot):
             boards = project['snapshot']['boards']
             summary = f"{len(boards)} boards · {len({card['id'] for board in boards for card in board['tasks']})} tasks"
         lines.append(f"{project['path']}: {summary}")
+        for message in warning_messages(project.get('snapshot')):
+            lines.append(f'  Warning: {message}')
     if not snapshot['projects']:
         lines.append('No projects configured. Add subdirectory paths to the Kanitor configuration projects list.')
     return '\n'.join(lines)

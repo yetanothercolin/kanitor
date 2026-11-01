@@ -23,3 +23,4 @@ Work recording, sessions and activities, timing, CLI/MCP integration and work br
 - [remove-the-current-interactive-work-views](tasks/remove-the-current-interactive-work-views.md)
 - [isolate-work-recording-from-viewer-configuration-errors](tasks/isolate-work-recording-from-viewer-configuration-errors.md)
 - [remove-retired-work-view-documentation](tasks/remove-retired-work-view-documentation.md)
+- [sum-recorded-work-durations-for-completed-activity-tickets](tasks/sum-recorded-work-durations-for-completed-activity-tickets.md)

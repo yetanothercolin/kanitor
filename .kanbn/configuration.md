@@ -25,3 +25,4 @@ Project discovery and watching, configuration formats and inheritance, and custo
 - [support-board-slug-columns-in-activity](tasks/support-board-slug-columns-in-activity.md)
 - [use-explicit-project-board-and-task-name-fields](tasks/use-explicit-project-board-and-task-name-fields.md)
 - [isolate-unlisted-workspaces-from-invalid-ancestor-configs](tasks/isolate-unlisted-workspaces-from-invalid-ancestor-configs.md)
+- [make-task-status-squares-configurable-table-columns](tasks/make-task-status-squares-configurable-table-columns.md)

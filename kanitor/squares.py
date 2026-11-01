@@ -40,14 +40,14 @@ class Square:
 
     @property
     def glyph(self):
-        return '■' if self.kind == 'done' else '□'
+        return '■' if self.kind in ('done', 'done_old') else '□'
 
     @property
     def pulse(self):
         return self.kind in ('active', 'stale')
 
 
-def classify(board, task, work, now, rules):
+def classify(board, task, work, now, rules, *, include_old_completed=False):
     metadata = task.get('metadata', {})
     history = [event for event in task.get('history', []) if event.get('board', board['slug']) == board['slug']]
     def latest(field, columns):
@@ -62,7 +62,9 @@ def classify(board, task, work, now, rules):
         return Square(task['id'], kind, at, activity, board['slug'])
     if workflow == 'done':
         at = latest('completed', options.get('completedColumns', []))
-        return badge('done', at) if 0 <= now - at < rules.recent_completed else None
+        if 0 <= now - at < rules.recent_completed:
+            return badge('done', at)
+        return badge('done_old', at) if include_old_completed else None
     if workflow == 'active':
         return badge('active' if 0 <= now - activity < rules.recent_work else 'stale')
     started = latest('started', options.get('startedColumns', []))

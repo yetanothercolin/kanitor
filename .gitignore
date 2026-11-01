@@ -10,7 +10,21 @@ dist/
 /.local/
 # Local work history can contain machine paths and private project context.
 /.kanitor/work/
+/.kanitor/view-state.json
+/.kanitor/.view-state.*.tmp
 .env
 .env.*
 !.env.example
 !.env.sample
+
+# Local Workflow & Tooling board; maintain card paths when adding index tasks.
+/.kanbn/index.md
+/.kanbn/tasks/add-public-repository-links-and-clone-instructions.md
+/.kanbn/tasks/add-release-compatibility-ci-and-installation-coverage.md
+/.kanbn/tasks/adopt-kanbn-and-kanitor-workspace-task-tracking.md
+/.kanbn/tasks/assess-and-commit-the-current-alpha-changes-for-publication.md
+/.kanbn/tasks/assess-public-release-readiness.md
+/.kanbn/tasks/declare-mit-licensing-for-kanitor.md
+/.kanbn/tasks/organize-kanbn-boards-by-broad-feature-group.md
+/.kanbn/tasks/require-list-formatting-for-task-completion-items.md
+/.kanbn/tasks/review-public-repository-for-accidental-local-disclosures.md

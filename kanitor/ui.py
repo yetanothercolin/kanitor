@@ -2,22 +2,24 @@
 import curses
 from datetime import datetime
 from pathlib import Path
-import textwrap
+import re
 import time
 
-from .model import card_details, counts, display, state
-from .reader import LiveReader
+from .model import card_details, counts, display
+from .reader import LiveReader, warning_summary
 from .config import BOARD_COUNTS, Column, layout_columns
-from .mouse import SgrMouseInput, WHEEL_DOWN, WHEEL_UP, WheelGesture
+from .mouse import SgrMouseInput, WHEEL_DOWN, WHEEL_UP, WheelGesture, native_button_motion
 from .text import cells, clean
 from .work.reader import WorkReader
-from .squares import SquareView, board_squares, latest_work, merge_project_squares
+from .squares import SquareView, board_squares, classify, latest_work, merge_project_squares
 from .table import RowViewport
 from .cell_ui import CellUI
 from .activity import ActivityPane, ActivityUI
+from .view_state import ViewState
+from .panes import PaneUI
+from .preview import PreviewUI
 from .keybindings import ACTION_DESCRIPTIONS, DEFAULT_BINDINGS, key_token
-
-PREVIEW_HEIGHT = 8
+from .selection import SelectionUI
 
 HELP = '''TABLES AND MENUS
 
@@ -34,7 +36,7 @@ and body. Date filters offer Today, Yesterday, Last 7/30 days, On, Before,
 After, Between. Custom dates use YYYY-MM-DD and local calendar boundaries.
 Before/After exclude that day; Between includes both ends. Relative filters
 update at midnight. Columns combine with AND; enum values use OR.
-One runtime sort per table, missing values last. Reset restores native tasks,
+One runtime sort per table, missing values last. Reset restores status/update tasks,
 declared projects, or newest-first boards. Board updated is the latest of
 its file mtime and valid task updated dates. Filters/sorts never edit files.
 
@@ -49,25 +51,49 @@ Tab and Shift+Tab switch focus when the Activity pane is shown.
 
 MOUSE AND PREVIEWS
 
+Toggle Selection freezes the visible text. Drag to highlight; arrows extend
+selection; Copy Selection or Open copies it. Back/Quit/Toggle Selection cancels.
+Terminal resizing cancels. Background readers continue; text editors and pane
+resize mode keep their input controls. Copy includes selected borders/headings.
+macOS uses pbcopy; other terminals need OSC 52 clipboard support.
+
 Wheel scrolling pauses below headers at the first row. Wait 200 ms without
 wheel input, then scroll up again to reach headers. Opposite direction responds
 immediately. Scrollbars show position; click above/below the thumb to page.
-Task description previews occupy eight rows, accept no input, and hide when
-the terminal is shorter than 19 rows.
+Task description previews default to eight rows, take no keyboard focus, and hide when
+the terminal is shorter than 19 rows. Enabled previews keep their space with
+an empty message when no task is selected. Toggle Preview also works there.
+Context stays above a divider. Wheel/trackpad and scrollbar clicks scroll the
+full description without changing selection. Lists use hanging indentation.
+
+PANE RESIZING
+
+Toggle Resize enters/leaves resize mode in Projects, Boards, and Tasks.
+Switch Pane cycles dividers (Shift+Tab reverses); Up/Down moves the active
+divider one row. Only its adjacent panes change height. Back/Open also finishes.
+Hold the left mouse button on a divider and drag; release saves the position.
+Main and Activity retain at least five rows; Preview retains at least three.
+Activity and Preview default to eight rows; the main list takes the rest.
+Edited divider positions are absolute and shared across Projects and its child
+views, with consistent lower-pane sizes. Smaller terminals clamp them temporarily.
 
 ACTIVITY
 
-Toggle Activity shows in-progress tickets; Switch Pane moves focus between
+Toggle Activity shows active and recently completed tickets; Switch Pane moves focus between
 the main table and Activity. Activity spans all projects in Projects, all boards
-in Boards, and the current board in Tasks, independently of table filters.
+in Boards, independently of table filters. Activity is unavailable in Tasks.
 Its elapsed counter follows the latest open task-linked work session, not time
 in status. Tickets without an open session show an unknown elapsed value.
+Active tickets come first; completed tickets follow newest completion first,
+with dimmer text and no running clock. Recency uses taskSquares.recentCompleted.
+Completed elapsed sums confirmed durations of all linked work sessions; ≥ marks
+a known subtotal when some timing is unknown. No duration is inferred from status.
 Activity shows the current work phase/session label and project/board context.
 Navigate tickets to preview descriptions. Move horizontally to select cells;
 Open on Project/Board goes there, on Task reads details, and on Assigned filters
 Activity to that value. Up from the first row selects headers. Header Open/click
 or Column Menu/right-click opens filter/sort actions. Back returns focus to the table.
-Activity is eight rows when space permits. With Activity, previews need at least
+Activity defaults to eight rows when space permits. With Activity, previews need at least
 25 terminal rows. Activity columns use activityColumns in configuration.
 
 TASK SQUARES
@@ -109,15 +135,38 @@ def pad(text, width, right=False):
 
 
 def wrap_lines(text, width):
-    # textwrap breaks long words; the second pass also handles wide Unicode glyphs.
+    """Wrap terminal cells, hanging list continuations after their marker."""
+    width = max(1, width)
     result = []
     for line in text.expandtabs(4).splitlines():
-        for part in textwrap.wrap(clean(line), max(1, width), replace_whitespace=False, drop_whitespace=False) or ['']:
-            while cells(part) > width:
-                prefix = clip(part, width)
-                result.append(prefix)
-                part = part[len(prefix):]
-            result.append(part)
+        line = clean(line)
+        marker = re.match(r'^\s*(?:[-+*•]|\d+[.)])\s+(?:\[[ xX]\]\s+)?', line)
+        prefix = marker.group() if marker else ''
+        hanging = ' ' * min(cells(prefix), max(0, width - 2))
+        first = True
+        if not line:
+            result.append('')
+        while line:
+            indent = '' if first else hanging
+            budget = width - len(indent)
+            if cells(line) <= budget:
+                result.append(indent + line.rstrip())
+                break
+            head = clip(line, budget)
+            if not head:
+                # A wide glyph cannot fit in a one-cell viewport. Consume it
+                # explicitly rather than looping on an empty prefix.
+                result.append(indent + '�')
+                line = line[1:]
+            else:
+                split = len(head)
+                if not line[split].isspace():
+                    space = head.rfind(' ')
+                    if space > (len(prefix) if first else 0):
+                        split = space
+                result.append(indent + line[:split].rstrip())
+                line = line[split:].lstrip()
+            first = False
     return result
 
 
@@ -126,9 +175,10 @@ def movement(key, page_size):
     return DEFAULT_BINDINGS.movement(key, page_size)
 
 
-class App(ActivityUI, CellUI):
+class App(SelectionUI, PaneUI, PreviewUI, ActivityUI, CellUI):
     def __init__(self, screen, root, explorer, start_in_board=False):
         self.screen, self.root, self.explorer = screen, root, explorer
+        self.init_selection()
         self.reader = LiveReader(root)
         self.revision = -1
         self.view = 'tasks' if start_in_board else 'boards'
@@ -153,7 +203,7 @@ class App(ActivityUI, CellUI):
         self.hidden_columns = 0
         self.task_header_y = 4
         self.show_preview = True
-        self.preview_rect = None
+        self.init_preview()
         self.needs_redraw = True
         self._wheel_input = False
         self.mouse_input = None
@@ -169,6 +219,7 @@ class App(ActivityUI, CellUI):
         self.summary_table = RowViewport()
         self.summary_ids = []
         self.squares_visible = self.squares_animated = False
+        self._square_phase = 0
         self._square_signature = None
         self._square_work_key = None
         self._square_work = {}
@@ -184,6 +235,10 @@ class App(ActivityUI, CellUI):
         self._square_click = None
         self.init_cells()
         self.activity = ActivityPane()
+        self.view_state = ViewState(root)
+        self.activity.shown = self.view_state.flag('activityVisible')
+        self.init_panes()
+        self._native_mouse_motion = False
         self._activity_clock = None
 
     def help_text(self):
@@ -202,11 +257,13 @@ class App(ActivityUI, CellUI):
         if self.column_menu:
             return self.menu_navigation_hint()
         if self.activity.focused:
-            return self.activity_status()
-        pane_hint = f" · {key('focusPane', True)} pane" if self.activity.shown else ''
+            return self.activity_footer()
+        pane_hint = f" · {key('focusPane', True)} pane" if self.activity_visible else ''
+        activity_hint = f"{key('toggleActivity', True)} activity{pane_hint} · " if self.activity_available else ''
         return (f"{key('left', True)} {key('right', True)} cells · "
                 f"{key('up', True)} {key('down', True)} rows · {key('open')} open · "
-                f"{key('toggleActivity', True)} activity{pane_hint} · "
+                + activity_hint +
+                f"{key('toggleResize', True)} resize · "
                 f"{key('columnMenu', True)} columns · {key('back', True)} back · "
                 f"{key('help', True)} help · {key('quit', True)} quit")
 
@@ -274,9 +331,11 @@ class App(ActivityUI, CellUI):
             # delaying selection while curses waits for another click.
             curses.mouseinterval(0)
             if hasattr(curses, 'BUTTON5_PRESSED'):
-                mask = (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED |
+                mask = (curses.BUTTON1_PRESSED | curses.BUTTON1_RELEASED | curses.BUTTON1_CLICKED |
                         curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON3_PRESSED | curses.BUTTON3_CLICKED | WHEEL_UP | WHEEL_DOWN)
-                curses.mousemask(mask)
+                curses.mousemask(mask | curses.REPORT_MOUSE_POSITION)
+                native_button_motion(True)
+                self._native_mouse_motion = True
             else:
                 self.mouse_input = SgrMouseInput(self.screen)
                 self.mouse_input.start()
@@ -311,6 +370,8 @@ class App(ActivityUI, CellUI):
         text = clip(text, max(0, min(columns - x - 1, width if width is not None else columns)))
         try:
             self.screen.addstr(y, x, text, attr)
+            if self.text_frame is not None:
+                self.text_frame.write(y, x, text, attr)
         except curses.error:
             pass  # Some terminals reject the bottom-right cell during resize.
 
@@ -416,9 +477,12 @@ class App(ActivityUI, CellUI):
         return False
 
     def draw(self):
+        if self.draw_text_selection():
+            return
         self.square_view.enter('boards' if self.view == 'boards' and not self.popup else None)
-        self.squares_visible = self.squares_animated = False
+        self.begin_square_frame()
         self.screen.erase()
+        self.begin_text_frame()
         self.hits = []
         self.square_hits = []
         self.scrollbars = []
@@ -438,7 +502,10 @@ class App(ActivityUI, CellUI):
         self.put(0, 2, self.breadcrumb(), self.attr('cyan') | curses.A_BOLD, width - 28)
         error = self.reader.error
         loaded = bool(board)
-        status = 'STALE' if error else 'LIVE' if loaded else 'LOADING'
+        warning = warning_summary(self.reader.snapshot,
+                                  self.explorer.board_slug if self.view == 'tasks' else None)
+        partial = bool((self.reader.snapshot or {}).get('warnings'))
+        status = 'STALE' if error else 'PARTIAL' if partial else 'LIVE' if loaded else 'LOADING'
         self.put(0, width - 23, 'READ ONLY · ' + status, self.attr('error' if error else 'cyan'))
         if board and self.view == 'tasks':
             totals = counts(board)
@@ -459,7 +526,7 @@ class App(ActivityUI, CellUI):
                 self.table_setup(columns)
                 self.prepare_square_focus(rows)
                 source = self.square_preview()
-                preview = bool(source) and height >= 19
+                preview = self.square_preview_shown and height >= 19
             else:
                 preview = self.show_preview and height >= 19
             if self.activity.focused:
@@ -483,26 +550,32 @@ class App(ActivityUI, CellUI):
             status = f"Select a board and press {self.bindings.label('open')} to open." if self.view == 'boards' else f"Filters: {self.explorer.filter_summary}  ·  Search: {self.explorer.query or '—'}"
             if self.hidden_columns and not self.popup:
                 status = f'{self.hidden_columns} columns hidden; widen terminal · ' + status
-            needed = 25 if self.activity.shown else 19
+            needed = 25 if self.activity_visible else 19
             if self.view == 'tasks' and self.show_preview and height < needed and not self.popup:
                 status = f"Preview needs {needed} rows; resize or {self.bindings.label('togglePreview', True)} to hide · " + status
         if self.squares_visible and self.work_reader.error and not self.reader.error:
             status = 'Work unavailable; active squares may be stale · ' + status
         if self.view == 'boards' and self.selected_square and not self.popup:
             status = self.square_navigation_hint()
-            needed = 25 if self.activity.shown else 19
+            needed = 25 if self.activity_visible else 19
             if height < needed and self.square_preview_shown:
                 status = f'Task preview needs {needed} rows · ' + status
         if self.activity.focused and not self.popup:
-            status = self.reader.error or self.activity_status()
+            status = self.reader.error or self.notice or self.activity_status()
         if self.searching:
             status = '/' + self.explorer.query + '▏  (Enter applies · Esc cancels)'
         elif self.column_menu:
-            status = self.menu_navigation_hint()
-        if not self.popup and not self.searching:
+            if self.column_menu.get('table') != 'activity':
+                status = self.menu_navigation_hint()
+        if not self.popup and not self.searching and not self.activity.focused:
             status = self.table_status() + (' · ' if self.table_status() else '') + status
+        if warning and not self.searching and not self.column_menu:
+            status = self.reader.error or warning
+        if self.resize_mode and not self.popup:
+            self.draw_resizers()
+            status = self.resize_status()
         self.put(height - 2, 2, status, self.attr('error' if self.reader.error and not self.searching else 'cyan'), width - 5)
-        footer = self.table_footer()
+        footer = self.resize_footer() if self.resize_mode and not self.popup else self.table_footer()
         self.put(height - 1, 2, footer, self.attr('cyan'), width - 4)
         if self.column_menu and not self.popup:
             self.draw_column_menu()
@@ -567,9 +640,26 @@ class App(ActivityUI, CellUI):
             if key in self.colors:
                 return self.colors[key]
             return self.attr('done' if color == 'green' else 'active') | (curses.A_DIM if phase == 0 else curses.A_BOLD if phase == 2 else 0)
-        if square.kind in ('done', 'paused'):
-            return self.attr('done') | (curses.A_DIM if square.kind == 'paused' else 0)
+        if square.kind in ('done', 'done_old', 'paused'):
+            return self.attr('done') | (curses.A_DIM if square.kind != 'done' else 0)
         return self.colors.get('square_white', self.colors.get('dim', 0)) | (curses.A_DIM if square.kind == 'old' else 0)
+
+    def begin_square_frame(self):
+        self.squares_visible = self.squares_animated = False
+        # Shared three-level triangular pulse; no terminal blink.
+        self._square_phase = (0, 0, 1, 1, 2, 2, 1, 1)[int(time.monotonic() / .35) % 8]
+
+    def task_square(self, board, task):
+        return classify(board, task, self.square_work(), time.time(),
+                        self.explorer.column_rules.square_rules, include_old_completed=True)
+
+    def draw_square(self, y, x, square, *, focused=False):
+        self.squares_visible = True
+        self.squares_animated |= square.pulse
+        attr = self.square_attr(square, self._square_phase)
+        if focused:
+            attr = (attr & ~curses.A_DIM) | curses.A_REVERSE | curses.A_BOLD
+        self.put(y, x, square.glyph, attr, 1)
 
     def draw_summary_rows(self, rows, columns, y, capacity, selected, top, identity, kind):
         width = self.screen.getmaxyx()[1]
@@ -603,8 +693,6 @@ class App(ActivityUI, CellUI):
                 top = max(0, min(table.maximum, min(top, line) if line < top else max(top, line - capacity + 1)))
             self._square_scroll_request = False
         self.summary_table, self.summary_ids = table, keys
-        # Three color levels over a slow triangular cycle; never terminal blink.
-        phase = (0, 0, 1, 1, 2, 2, 1, 1)[int(time.monotonic() / .35) % 8]
         for index, row in enumerate(rows):
             start, end = table.starts[index:index + 2]
             if end <= top or start >= top + capacity:
@@ -624,14 +712,9 @@ class App(ActivityUI, CellUI):
                         lines = prepared[index][column_index]
                         if line - start < len(lines):
                             for position, square in enumerate(lines[line - start]):
-                                self.squares_animated |= square.pulse
                                 focused = (self.main_pane_focused and not self.focus.header and self.focus.index == column_index
                                            and self.selected_square == (row[identity], square.id))
-                                square_attr = self.square_attr(square, phase)
-                                if focused:
-                                    square_attr = (square_attr & ~curses.A_DIM) | curses.A_REVERSE | curses.A_BOLD
-                                self.put(screen_y, x + position * 2, square.glyph,
-                                    square_attr, 1)
+                                self.draw_square(screen_y, x + position * 2, square, focused=focused)
                                 self.square_hits.append((screen_y, x + position * 2, row[identity], square))
                     elif line == max(start, top):
                         color = (self.attr('error') if column.field == 'state' and row.get('error') else
@@ -682,16 +765,7 @@ class App(ActivityUI, CellUI):
         return self.resolve_square(self.selected_square[0], square) if square and self.square_preview_shown else None
 
     def draw_square_preview(self, y, source):
-        _, board, task = source
-        width = self.screen.getmaxyx()[1]
-        self.frame(y, PREVIEW_HEIGHT, 'Task · ' + task['name'])
-        self.preview_rect = y, 1, PREVIEW_HEIGHT, width - 2
-        lines = [f"{board['slug']} · {task['id']} · {task['column']}"]
-        lines += wrap_lines(task.get('description') or 'No description.', width - 9)
-        for offset, line in enumerate(lines[:PREVIEW_HEIGHT - 2]):
-            if offset == PREVIEW_HEIGHT - 3 and len(lines) > PREVIEW_HEIGHT - 2:
-                line = clip(line, width - 11) + ' …'
-            self.put(y + 1 + offset, 4, line, width=width - 9)
+        self.draw_task_preview(y, source)
 
     def open_square(self, row, square):
         source = self.resolve_square(row, square)
@@ -808,7 +882,7 @@ class App(ActivityUI, CellUI):
         columns, self.hidden_columns = self.table_layout()
         self.task_header_y = y + 1
         self.table_setup(columns)
-        x = 5
+        x = 3
         for column_index, (column, column_width) in enumerate(columns):
             self.filter_headers.append((y + 1, x, column_width, column))
             if column.field == 'status':
@@ -833,15 +907,16 @@ class App(ActivityUI, CellUI):
             self.put(row, 3, ' ' * (width - 7))
             if selected:
                 self.draw_row_focus(row)
-            status = state(board, card['column'])
-            self.put(row, 3, '□' if status == 'remaining' else '■', self.attr('dim' if status == 'remaining' else status))
-            x = 5
+            x = 3
             for column_index, (column, column_width) in enumerate(columns):
                 self.add_cell_hit(row, x, column_width, card['id'], column_index)
                 value_attr = self.cell_attr(column_index, selected)
                 if column.metadata is not None:
                     value_attr |= self.attr('cyan')
-                self.put(row, x, pad(column.value(card), column_width), value_attr)
+                if column.field == 'status_square':
+                    self.draw_square(row, x, self.task_square(board, card), focused=bool(value_attr & curses.A_REVERSE))
+                else:
+                    self.put(row, x, pad(column.value(card, board=board), column_width), value_attr)
                 x += column_width + 1
             self.hits.append((row, 'task', card['id']))
         if not rows:
@@ -860,24 +935,16 @@ class App(ActivityUI, CellUI):
         self.draw_scrollbar(y + 2, width - 3, capacity, len(rows), capacity, self.task_top, 'tasks')
 
     def draw_preview(self, y):
-        width = self.screen.getmaxyx()[1]
         card = self.explorer.selected
         title = f"Description · {card['name']}" if card else 'Description'
-        self.frame(y, PREVIEW_HEIGHT, title)
-        self.preview_rect = (y, 1, PREVIEW_HEIGHT, width - 2)
-        text = (card.get('description') or 'No description.') if card else 'No task selected.'
-        lines = wrap_lines(text, width - 9)
-        capacity = PREVIEW_HEIGHT - 2
-        for offset, line in enumerate(lines[:capacity]):
-            if offset == capacity - 1 and len(lines) > capacity:
-                line = clip(line, width - 11) + ' …'
-            self.put(y + 1 + offset, 4, line, width=width - 9)
+        source = (self, self.explorer.board, card) if card else None
+        self.draw_task_preview(y, source, title=title)
 
     def table_layout(self):
         width = self.screen.getmaxyx()[1]
         rules = self.explorer.column_rules.for_board(self.explorer.board_slug)
         filtered = {column.key for column in rules if self.explorer.is_filtered(column)}
-        return layout_columns(rules, width, width - 9, self.explorer.rows, filtered=filtered, sorting=self.table_state.sort)
+        return layout_columns(rules, width, width - 7, self.explorer.rows, filtered=filtered, sorting=self.table_state.sort)
 
     def date_display_signature(self):
         """Detect clock-driven display changes without repainting unchanged tables."""
@@ -970,14 +1037,16 @@ class App(ActivityUI, CellUI):
             _, x, y, _, buttons = self.get_mouse()
         except curses.error:
             return
+        if self.text_selection_mouse(x, y, buttons):
+            return
+        if not self.popup and not self.column_menu and not self.searching and self.resize_mouse(x, y, buttons):
+            return
         if not self.popup and not self.column_menu and self.handle_activity_mouse(x, y, buttons):
             return
         if not self.popup and not self.column_menu and self.repeat_square_click(x, y, buttons):
             return
-        if not self.popup and not self.column_menu and self.preview_rect:
-            top, left, height, width = self.preview_rect
-            if top <= y < top + height and left <= x < left + width:
-                return
+        if not self.popup and not self.column_menu and self.handle_preview_mouse(x, y, buttons):
+            return
         up, down = bool(buttons & WHEEL_UP), bool(buttons & WHEEL_DOWN)
         if up or down:
             self._wheel_input = True
@@ -1007,6 +1076,8 @@ class App(ActivityUI, CellUI):
 
     def handle(self, key):
         if key == curses.KEY_RESIZE:
+            self.finish_text_selection()
+            self.end_resize_drag()
             self.needs_redraw = True
             return True
         if key == curses.KEY_MOUSE:
@@ -1017,6 +1088,8 @@ class App(ActivityUI, CellUI):
         self._wheel_input = False
         self.needs_redraw = True
         action = self.bindings.action(key)
+        if self.handle_text_selection_key(key):
+            return True
         page_size = (self.popup_height if self.popup
                      else self.board_height if self.view == 'boards' else self.task_height)
         move = self.key_movement(key, page_size)
@@ -1048,6 +1121,8 @@ class App(ActivityUI, CellUI):
                 self.explorer.search('')
             elif isinstance(key, str) and key.isprintable():
                 self.explorer.search(self.explorer.query + key)
+            return True
+        if self.handle_resize_key(key):
             return True
         if self.handle_activity_key(key):
             return True
@@ -1085,8 +1160,9 @@ class App(ActivityUI, CellUI):
                 if self.requested_board and self.requested_board != self.explorer.board_slug:
                     self.notice = f'Board {self.requested_board!r} is unavailable; showing {self.explorer.board_slug}.'
                 self.requested_board = None
-        need_squares = watch_squares or self.activity.shown or (self.view == 'boards'
-            and any(column.field == 'task_squares' for column in self.explorer.column_rules.board_columns))
+        need_squares = watch_squares or self.activity_visible or (self.view == 'boards'
+            and any(column.field == 'task_squares' for column in self.explorer.column_rules.board_columns)) or (self.view == 'tasks'
+            and any(column.field == 'status_square' for column in self.explorer.column_rules.for_board(self.explorer.board_slug)))
         if (need_squares and self.root.is_dir()) or self.work_reader.process:
             before = self.work_reader.revision, self.work_reader.error
             self.work_reader.poll()
@@ -1106,6 +1182,7 @@ class App(ActivityUI, CellUI):
             self._date_checked = clock + 1
 
     def close(self):
+        self.end_resize_drag()
         try:
             self.reader.close()
         finally:
@@ -1135,6 +1212,8 @@ class App(ActivityUI, CellUI):
             try:
                 if self.mouse_input:
                     self.mouse_input.close()
+                elif self._native_mouse_motion:
+                    native_button_motion(False)
             finally:
                 self.close()
 

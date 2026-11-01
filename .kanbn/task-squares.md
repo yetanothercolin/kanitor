@@ -23,3 +23,4 @@ Task status square classification, ordering, wrapping, selection, previews and n
 - [show-in-progress-task-squares-before-completions](tasks/show-in-progress-task-squares-before-completions.md)
 - [navigate-task-squares-across-adjacent-summary-rows](tasks/navigate-task-squares-across-adjacent-summary-rows.md)
 - [add-horizontal-jump-bindings-for-task-squares](tasks/add-horizontal-jump-bindings-for-task-squares.md)
+- [standardize-square-styling-across-explorer-tables](tasks/standardize-square-styling-across-explorer-tables.md)

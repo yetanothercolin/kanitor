@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from functools import cached_property
 import json
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -12,11 +13,11 @@ from .keybindings import DEFAULT_BINDINGS, KeyBindings, parse_keybindings
 
 CONFIG_NAME = '.kanitor.json'
 CONFIG_NAMES = (CONFIG_NAME, '.kanitor.yml', '.kanitor.yaml')
-FIELDS = {'status': 'column', 'task': 'name', 'id': 'id', 'description': 'description', 'name': 'name'}
+FIELDS = {'status_square': 'column', 'status': 'column', 'task': 'name', 'id': 'id', 'description': 'description', 'name': 'name'}
 BOARD_FIELDS = ('slug', 'board', 'description', 'path', 'main', 'cards', 'active', 'done', 'remaining', 'updated', 'task_squares', 'name')
 BOARD_COUNTS = ('cards', 'active', 'done', 'remaining')
 PROJECT_FIELDS = ('project', 'path', 'root', 'boards', 'cards', 'state', 'task_squares', 'name')
-ACTIVITY_FIELDS = ('project', 'board', 'slug', 'id', 'task', 'description', 'status', 'assigned',
+ACTIVITY_FIELDS = ('project', 'board', 'slug', 'id', 'task', 'description', 'status_square', 'status', 'assigned',
                    'activity', 'session', 'started_at', 'elapsed', 'name')
 NAME_FIELDS = {'project': 'project', 'board': 'board', 'task': 'task', 'activity': 'task'}
 SESSION_FIELDS = ('id', 'label', 'state', 'started_at', 'ended_at', 'last_event_at', 'subject', 'outcome',
@@ -72,7 +73,7 @@ class Column:
 
     @property
     def can_filter(self):
-        if self.field == 'task_squares':
+        if self.field in ('task_squares', 'status_square'):
             return False
         if self.filterable is not None:
             return self.filterable
@@ -86,7 +87,7 @@ class Column:
 
     @property
     def can_sort(self):
-        if self.field == 'task_squares':
+        if self.field in ('task_squares', 'status_square'):
             return False
         if self.sortable is not None:
             return self.sortable
@@ -112,15 +113,28 @@ class Column:
         field = self.canonical_field
         if self.scope == 'task':
             field = FIELDS[field]
+        elif self.scope == 'activity' and field == 'status_square':
+            field = 'status'
         elif field == NAME_FIELDS.get(self.scope):
             field = 'name'
         return card.get(field)
 
-    def value(self, card, now=None):
+    def value(self, card, now=None, *, board=None):
         value = self.raw_value(card)
+        if self.field == 'status_square':
+            from .squares import classify
+            native = board or card.get('native_board')
+            if native is None:
+                return '□'  # Measurement without workflow context: always one cell.
+            square = classify(native, card['task'] if self.scope == 'activity' else card, {},
+                              time.time() if now is None else now, SquareRules(), include_old_completed=True)
+            return square.glyph
         if self.is_duration:
             from .work.display import duration_cell
-            return duration_cell(value)
+            rendered = duration_cell(value)
+            if self.scope == 'activity' and card.get('elapsed_partial') and value is not None:
+                return '≥' + rendered.lstrip()
+            return rendered
         if value is None or value == '':
             return '—'
         if self.field == 'task_squares':
@@ -147,6 +161,7 @@ class Column:
 
 
 DEFAULT_COLUMNS = (
+    Column('', field='status_square', width='hug'),
     Column('STATUS', field='status', width=16),
     Column('UPDATED', metadata='updated', width=16, format=DEFAULT_DATE_FORMAT),
     Column('ASSIGNED', metadata='assigned', width=12, min_terminal_width=90),
@@ -275,8 +290,8 @@ def parse_columns(value, location, scope='task'):
             fail(here + '.sortable', 'must be true or false')
         if 'filterType' in rule and rule['filterType'] not in ('enum', 'string', 'date'):
             fail(here + '.filterType', 'must be enum, string, or date')
-        if rule.get('field') == 'task_squares' and (rule.get('filterable') or rule.get('sortable')):
-            fail(here, 'task_squares does not support filtering or sorting')
+        if rule.get('field') in ('task_squares', 'status_square') and (rule.get('filterable') or rule.get('sortable')):
+            fail(here, rule['field'] + ' does not support filtering or sorting; use status for status-square actions')
         if scope == 'activity' and rule.get('field') == 'elapsed' and rule.get('filterable'):
             fail(here, 'live elapsed supports sorting, not exact-value filtering')
         minimum = rule.get('minTerminalWidth', 0)
@@ -284,6 +299,8 @@ def parse_columns(value, location, scope='task'):
             fail(here + '.minTerminalWidth', 'must be a nonnegative integer')
         if rule.get('field') == 'task_squares' and ('format' in rule or 'thresholds' in rule):
             fail(here, 'task_squares uses taskSquares recency settings, not date formatting')
+        if rule.get('field') == 'status_square' and ('format' in rule or 'thresholds' in rule or 'filterType' in rule):
+            fail(here, 'status_square is a workflow indicator, not a date or filter column')
         pattern = parse_date_format(rule['format'], here + '.format') if 'format' in rule else None
         thresholds = parse_thresholds(rule['thresholds'], here + '.thresholds') if 'thresholds' in rule else ()
         if pattern is None and ('thresholds' in rule or (scope == 'session' and rule.get('field') in SESSION_DATES)

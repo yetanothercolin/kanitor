@@ -6,6 +6,7 @@ import time
 
 from .config import DEFAULT_PROJECT_COLUMNS, layout_columns
 from .model import Explorer
+from .reader import warning_summary
 from .ui import App, pad
 from .table_state import TableState
 
@@ -50,6 +51,7 @@ class ProjectsApp(App):
                 child = App(self.screen, project.root, Explorer())
                 child.colors = self.colors
                 child.on_projects = self.show_projects
+                child.pane_layout_state = self.pane_layout_state
                 self.children[key] = child
             self.children[key].project_label = project.path
         self.children = {key: self.children[key] for key in keys}
@@ -90,15 +92,16 @@ class ProjectsApp(App):
             child = self.children[key]
             reader = child.reader
             snapshot = reader.snapshot
-            state = 'STALE' if reader.error and snapshot else 'Unavailable' if reader.error else 'Live' if snapshot else 'Loading'
+            warning = warning_summary(snapshot)
+            state = 'STALE' if reader.error and snapshot else 'Unavailable' if reader.error else 'Partial' if warning else 'Live' if snapshot else 'Loading'
             boards = snapshot.get('boards', []) if snapshot else []
             row = {'id': key, 'name': Path(project.path).name, 'path': project.path, 'root': str(project.root),
                          'boards': len(boards) if snapshot else None,
                          'cards': len({card['id'] for board in boards for card in board['tasks']}) if snapshot else None,
-                         'state': state, 'error': reader.error}
+                         'state': state, 'error': reader.error, 'warning': warning}
             if any(column.field == 'task_squares' for column in self.catalog.rules.project_columns):
                 row['task_squares'] = self.square_view.bundle(key,
-                    child.square_data(self.catalog.rules.square_rules)[1],
+                    child.square_data(child.explorer.column_rules.square_rules)[1],
                     freeze=child.work_reader.snapshot is not None or bool(child.work_reader.error))
                 if child.work_reader.error and not row['error']:
                     row.update(state='Work stale', error=child.work_reader.error)
@@ -144,13 +147,16 @@ class ProjectsApp(App):
             super().close()
 
     def draw(self):
-        self.squares_visible = self.squares_animated = False
+        self.begin_square_frame()
         if self.active:
             self.square_view.enter(None)
             self.active.draw()
             self.active.needs_redraw = False
             return
+        if self.draw_text_selection():
+            return
         self.screen.erase()
+        self.begin_text_frame()
         self.hits, self.scrollbars, self.square_hits = [], [], []
         self.cell_hits, self.header_hits = [], []
         self.preview_rect = None
@@ -167,12 +173,13 @@ class ProjectsApp(App):
         self.table_setup(columns)
         self.prepare_square_focus(rows)
         preview = self.square_preview() if not self.popup else None
-        wants_preview = self.activity.preview_shown if self.activity.focused else bool(preview) and height >= 19
+        wants_preview = self.activity.preview_shown if self.activity.focused else self.square_preview_shown and height >= 19
         list_height, activity_rect, preview_top = self.pane_layout(wants_preview)
         project_name = self.root.name if any(
             (self.root / name).exists() for name in ('.kanbn', 'kanbn.json', 'kanbn.yml')) else ''
         self.put(0, 2, 'KANITOR / ' + project_name, self.attr('cyan') | curses.A_BOLD, width - 28)
-        self.put(0, width - 23, 'READ ONLY · ' + ('STALE' if self.catalog.error else 'LIVE'), self.attr('error' if self.catalog.error else 'cyan'))
+        partial = any((child.reader.snapshot or {}).get('warnings') for child in self.children.values())
+        self.put(0, width - 23, 'READ ONLY · ' + ('STALE' if self.catalog.error else 'PARTIAL' if partial else 'LIVE'), self.attr('error' if self.catalog.error else 'cyan'))
         self.put(1, 2, f"Projects · {len(rows)} project{'s' if len(rows) != 1 else ''}", self.attr('cyan'))
         self.put(2, 2, str(self.root), self.attr('dim'), width - 5)
         if self.popup:
@@ -202,7 +209,7 @@ class ProjectsApp(App):
                     self.activity_preview(preview_top)
                 else:
                     self.draw_square_preview(preview_top, preview)
-        status = self.catalog.error or selected.get('error') or f"Select a project and press {self.bindings.label('open')}."
+        status = self.catalog.error or selected.get('error') or self.notice or f"Select a project and press {self.bindings.label('open')}."
         if self.hidden_columns and not self.popup:
             status = f'{self.hidden_columns} columns hidden; widen terminal · ' + status
         if self.selected_square and not self.popup:
@@ -211,12 +218,18 @@ class ProjectsApp(App):
             if height < needed and self.square_preview_shown:
                 status = f'Task preview needs {needed} rows · ' + status
         if self.activity.focused and not self.popup:
-            status = self.activity_status()
-        if self.column_menu:
+            status = self.catalog.error or selected.get('error') or self.notice or self.activity_status()
+        if self.column_menu and self.column_menu.get('table') != 'activity':
             status = self.menu_navigation_hint()
-        status = self.table_status() + (' · ' if self.table_status() else '') + status
+        if not self.activity.focused:
+            status = self.table_status() + (' · ' if self.table_status() else '') + status
+        if selected.get('warning') and not self.column_menu:
+            status = self.catalog.error or selected.get('error') or selected['warning']
+        if self.resize_mode and not self.popup:
+            self.draw_resizers()
+            status = self.resize_status()
         self.put(height - 2, 2, status, self.attr('error' if self.catalog.error or selected.get('error') else 'cyan'), width - 5)
-        footer = self.table_footer()
+        footer = self.resize_footer() if self.resize_mode and not self.popup else self.table_footer()
         self.put(height - 1, 2, footer, self.attr('cyan'), width - 4)
         if self.column_menu and not self.popup:
             self.draw_column_menu()
@@ -280,7 +293,7 @@ class ProjectsApp(App):
         columns = layout_columns(self.catalog.rules.project_columns, self.screen.getmaxyx()[1],
                                  self.screen.getmaxyx()[1] - 7)[0]
         if child and any(column.field == 'task_squares' for column, _ in columns):
-            square = next((square for square in child.square_data(self.catalog.rules.square_rules)[1] if square.id == identity), None)
+            square = next((square for square in child.square_data(child.explorer.column_rules.square_rules)[1] if square.id == identity), None)
             if square:
                 return square
         self.selected_square = None
@@ -330,6 +343,11 @@ class ProjectsApp(App):
             self._wheel_input = child._wheel_input
             self.needs_redraw |= child.needs_redraw
             return result
+        if key == curses.KEY_RESIZE:
+            self.finish_text_selection()
+            self.end_resize_drag()
+            self.needs_redraw = True
+            return True
         self._wheel_input = False
         if key == curses.KEY_MOUSE:
             self.mouse()
@@ -338,6 +356,8 @@ class ProjectsApp(App):
         self._square_click = None
         self.needs_redraw = True
         action = self.bindings.action(key)
+        if self.handle_text_selection_key(key):
+            return True
         size = self.popup_height if self.popup else self.project_height
         move = self.key_movement(key, size)
         if self.popup:
@@ -351,6 +371,8 @@ class ProjectsApp(App):
                 self.popup_scroll = 0 if action == 'first' else self.popup_max
         elif self.column_menu:
             self.handle_column_menu(key)
+        elif self.handle_resize_key(key):
+            pass
         elif self.handle_activity_key(key):
             pass
         elif self.handle_table_key(key):

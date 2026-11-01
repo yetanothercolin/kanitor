@@ -66,7 +66,8 @@ def main(argv=None):
                     raise ReadError(catalog.error)
                 data = read_projects(catalog)
                 print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else plain_projects(data))
-                return int(any(project['error'] for project in data['projects']))
+                return int(any(project['error'] or project.get('snapshot', {}).get('warnings')
+                               for project in data['projects']))
             if selected_project:
                 root = selected_project.root
             data = read_once(root)
@@ -74,7 +75,7 @@ def main(argv=None):
                 raise ReadError(f'Board {args.board!r} does not exist.')
             explorer.apply(data)
             print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else plain_snapshot(data, explorer))
-            return 0
+            return int(bool(data.get('warnings')))
         except ReadError as error:
             print(f'kanitor: {error}', file=sys.stderr)
             return 1

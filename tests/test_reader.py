@@ -90,6 +90,28 @@ class NativeReaderTests(unittest.TestCase):
         config_path.write_text(json.dumps(config))
         self.assertEqual([b['slug'] for b in read_once(self.root)['boards']], ['roadmap'])
 
+    def test_malformed_history_is_omitted_with_actionable_warning_without_modification(self):
+        card = self.root / '.kanbn/tasks/search-cards.md'
+        malformed = card.read_text() + '\n## History\n\n- type: moved\n  date: 2026-10-30T12:00:00Z\n  toColumn: Done\n'
+        card.write_text(malformed)
+        before = self.files()
+        data = read_once(self.root)
+        self.assertEqual(self.files(), before)
+        self.assertEqual(len(data['boards']), 2)
+        self.assertNotIn('search-cards', [task['id'] for task in data['boards'][0]['tasks']])
+        self.assertEqual(data['warnings'], [{'task': 'search-cards', 'board': 'index',
+            'error': 'Unable to parse task: moved history event is missing fromColumn or toColumn'}])
+        for flag in ('--once', '--json'):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(['--root', str(self.root), flag]), 1)
+            self.assertIn('search-cards', output.getvalue())
+            self.assertIn('missing fromColumn or toColumn', output.getvalue())
+            if flag == '--json':
+                self.assertEqual(len(json.loads(output.getvalue())['boards']), 2)
+            else:
+                self.assertIn('PARTIAL', output.getvalue())
+
     def test_live_refresh_error_recovery_and_unchanged_frames(self):
         reader = LiveReader(self.root, interval=0.01)
         self.addCleanup(reader.close)
@@ -103,15 +125,39 @@ class NativeReaderTests(unittest.TestCase):
         card = self.root / '.kanbn/tasks/search-cards.md'
         original = card.read_text()
         card.write_text('Not a native card')
-        wait_for(reader, lambda: bool(reader.error))
-        self.assertIsNotNone(reader.snapshot)
-        self.assertEqual(reader.revision, 1)
-        card.write_text(original.replace('Search titles', 'Search all titles'))
-        wait_for(reader, lambda: reader.revision == 2)
+        revision = reader.revision
+        wait_for(reader, lambda: reader.revision > revision)
         self.assertFalse(reader.error)
+        self.assertEqual(reader.snapshot['warnings'][0]['task'], 'search-cards')
+        self.assertIsNotNone(reader.snapshot)
+        self.assertEqual(reader.revision, 2)
+        card.write_text(original.replace('Search titles', 'Search all titles'))
+        wait_for(reader, lambda: reader.revision == 3)
+        self.assertFalse(reader.error)
+        self.assertEqual(reader.snapshot['warnings'], [])
         self.assertIn('Search all titles', reader.snapshot['boards'][0]['tasks'][1]['description'])
         reader.refresh()
-        wait_for(reader, lambda: reader.revision == 3)
+        wait_for(reader, lambda: reader.revision == 4)
+
+    def test_initial_read_is_usable_when_all_tasks_fail_including_shared_memberships(self):
+        for card in (self.root / '.kanbn/tasks').glob('*.md'):
+            card.write_text('Not a native card')
+        before = self.files()
+        reader = LiveReader(self.root, interval=.01)
+        self.addCleanup(reader.close)
+        wait_for(reader, lambda: reader.revision == 1)
+        self.assertFalse(reader.error)
+        data = reader.snapshot
+        self.assertEqual([board['tasks'] for board in data['boards']], [[], []])
+        self.assertEqual(len(data['warnings']), 9)
+        self.assertEqual({item['board'] for item in data['warnings']
+                          if item['task'] == 'read-native-kanbn-data'}, {'index', 'releases'})
+        self.assertEqual(self.files(), before)
+        card = self.root / '.kanbn/tasks/read-native-kanbn-data.md'
+        shutil.copy(DEMO / '.kanbn/tasks/read-native-kanbn-data.md', card)
+        wait_for(reader, lambda: reader.revision == 2)
+        self.assertEqual(len(reader.snapshot['warnings']), 7)
+        self.assertTrue(all(board['tasks'][0]['id'] == card.stem for board in reader.snapshot['boards']))
 
     def test_live_reader_follows_new_boards_and_deletions(self):
         reader = LiveReader(self.root, interval=0.01)
@@ -220,14 +266,16 @@ class NativeReaderTests(unittest.TestCase):
         self.assertNotIn('cards', data['boards'][0])
         self.assertEqual(self.files(), before)
 
-    def test_missing_workspace_and_missing_card_fail(self):
+    def test_missing_workspace_fails_but_missing_card_is_isolated(self):
         (self.root / '.kanbn/index.md').unlink()
         with self.assertRaisesRegex(ReadError, 'No initialized kanbn workspace'):
             read_once(self.root)
         shutil.copy(DEMO / '.kanbn/index.md', self.root / '.kanbn/index.md')
         (self.root / '.kanbn/tasks/keyboard-shortcuts.md').unlink()
-        with self.assertRaisesRegex(ReadError, 'No task file'):
-            read_once(self.root)
+        data = read_once(self.root)
+        self.assertEqual(len(data['boards']), 2)
+        self.assertEqual(data['warnings'][0]['task'], 'keyboard-shortcuts')
+        self.assertIn('No task file', data['warnings'][0]['error'])
 
     def test_cli_snapshots_and_error_exit(self):
         output = io.StringIO()

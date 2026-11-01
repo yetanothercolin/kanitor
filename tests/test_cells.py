@@ -27,16 +27,16 @@ class CellTests(ProjectFixture):
         app.draw()
         self.assertEqual((app.screen.grid[5][2], app.screen.grid[5][96]), ('⟦', '⟧'))
         self.assertEqual(app.screen.attributes[5][2], app.colors['cyan'])
-        self.assertTrue(app.screen.attributes[5][5] & curses.A_REVERSE)
-        self.assertFalse(app.screen.attributes[5][22] & curses.A_REVERSE)
+        self.assertTrue(app.screen.attributes[5][3] & curses.A_REVERSE)
+        self.assertFalse(app.screen.attributes[5][5] & curses.A_REVERSE)
         app.handle(curses.KEY_LEFT)
         self.assertEqual(app.focus.index, 0)
         self.assertEqual(app.view, 'tasks')
         app.handle(curses.KEY_RIGHT)
         app.draw()
         self.assertEqual(app.focus.index, 1)
-        self.assertFalse(app.screen.attributes[5][5] & curses.A_REVERSE)
-        self.assertTrue(app.screen.attributes[5][22] & curses.A_REVERSE)
+        self.assertFalse(app.screen.attributes[5][3] & curses.A_REVERSE)
+        self.assertTrue(app.screen.attributes[5][5] & curses.A_REVERSE)
         self.assertIsNone(app.popup)
         app.handle(curses.KEY_UP)
         app.draw()
@@ -52,7 +52,7 @@ class CellTests(ProjectFixture):
         self.assertIsNone(app.column_menu)
         app.handle(' ')
         self.assertEqual(app.column_menu['mode'], 'actions')
-        self.assertEqual(app.column_menu['column'].metadata, 'assigned')
+        self.assertEqual(app.column_menu['column'].metadata, 'updated')
         app.handle('\x1b')
         app.handle(curses.KEY_DOWN)
         app.handle(' ')
@@ -88,6 +88,7 @@ class CellTests(ProjectFixture):
 
     def test_enum_menu_string_editor_cancel_and_active_markers(self):
         app = self.tasks()
+        app.focus_column(1)  # Status follows the configurable indicator.
         app.handle(curses.KEY_UP)
         app.handle('\n')
         self.action(app, 'filter')
@@ -97,7 +98,7 @@ class CellTests(ProjectFixture):
         app.draw()
         self.assertEqual([r['id'] for r in app.explorer.rows], ['one', 'two'])
         self.assertIn('STATUS▾', app.screen.text().splitlines()[4])
-        app.focus_column(3)
+        app.focus_column(4)
         app.handle('\n')
         self.action(app, 'filter')
         for key in 'native metadata':
@@ -115,7 +116,7 @@ class CellTests(ProjectFixture):
         app = self.tasks()
         app.explorer.board['tasks'][0]['metadata']['updated'] = '2026-10-28T09:00:00'
         app.focus.header = True
-        app.focus_column(1)
+        app.focus_column(2)
         app.handle('\n')
         self.action(app, 'filter')
         self.action(app, 'Between')
@@ -137,7 +138,7 @@ class CellTests(ProjectFixture):
         app = self.tasks()
         app.explorer.selected_id = 'two'
         app.focus.header = True
-        app.focus_column(2)
+        app.focus_column(3)
         app.handle('\n')
         self.action(app, 'desc')
         self.assertEqual([r['id'] for r in app.explorer.rows], ['two', 'one', 'three'])
@@ -227,7 +228,7 @@ class CellTests(ProjectFixture):
 
     def test_focus_identity_survives_config_reordering_and_menu_resize(self):
         app = self.tasks()
-        app.focus_column(2)
+        app.focus_column(3)
         rules = app.explorer.column_rules.columns
         app.explorer.column_rules = parse_config({'columns': [{'title': c.title, 'metadata' if c.metadata else 'field': c.metadata or c.field} for c in reversed(rules)]})
         app.draw()
@@ -248,6 +249,7 @@ class CellTests(ProjectFixture):
         app.explorer.apply(data)
         app.draw()
         self.assertIsNotNone(app.explorer.selected_id)
+        app.focus_column(1)
         app.handle('f')
         self.action(app, 'filter')
         app.handle(' ')
@@ -260,7 +262,7 @@ class CellTests(ProjectFixture):
         app = self.tasks()
         app.explorer.selected_id = 'two'
         app.draw()
-        column = app.cell_columns[0][0]
+        column = app.cell_columns[1][0]
         # A live predicate can change its results without apply_column_change,
         # for example when a relative date boundary advances at midnight.
         app.explorer.task_state.filters[column.key] = Criterion('exclude', column.filter_token(app.explorer.selected))

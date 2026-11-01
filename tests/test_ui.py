@@ -162,6 +162,20 @@ class UITests(unittest.TestCase):
         self.assertIsNone(app.popup)
         self.assertFalse(app.handle('q'))
 
+    def test_partial_snapshot_warns_without_blocking_task_navigation(self):
+        app = self.app()
+        app.reader.snapshot = dict(snapshot(), warnings=[{
+            'board': 'index', 'task': 'broken', 'error': 'Invalid history'}])
+        app.draw()
+        self.assertIn('READ ONLY · PARTIAL', app.screen.text())
+        self.assertIn('index/broken: Invalid history', app.screen.text())
+        app.handle('\n')
+        self.assertIsNotNone(app.popup)
+        app.reader.snapshot['warnings'] = []
+        app.draw()
+        self.assertIn('READ ONLY · LIVE', app.screen.text())
+        self.assertNotIn('Invalid history', app.screen.text())
+
     def test_trackpad_scrolls_card_in_both_directions_within_bounds(self):
         app = self.app(16, 60)
         app.explorer.selected['description'] = '\n'.join(f'Description line {i}' for i in range(60))
@@ -253,7 +267,8 @@ class UITests(unittest.TestCase):
         with patch.object(app.screen, 'get_wch', create=True, side_effect=keys), \
                 patch.object(app.screen, 'timeout', create=True) as timeout, \
                 patch('kanitor.ui.curses.getmouse', return_value=(0, 20, 6, 0, WHEEL_DOWN)), \
-                patch('kanitor.ui.time.monotonic', return_value=1.0):
+                patch('kanitor.ui.time.monotonic', return_value=1.0), \
+                patch('kanitor.ui.time.time', return_value=1800000000):
             app.handle(curses.KEY_MOUSE)
             pending = app.drain_wheel_burst()
         self.assertEqual(app.explorer.selected_id, 'task-59')
@@ -271,7 +286,8 @@ class UITests(unittest.TestCase):
                 patch.object(app.screen, 'get_wch', create=True, side_effect=[curses.KEY_MOUSE] * 100 + ['q']), \
                 patch.object(app.screen, 'timeout', create=True), \
                 patch('kanitor.ui.curses.getmouse', return_value=(0, 20, 6, 0, WHEEL_DOWN)), \
-                patch('kanitor.ui.time.monotonic', return_value=1.0):
+                patch('kanitor.ui.time.monotonic', return_value=1.0), \
+                patch('kanitor.ui.time.time', return_value=1800000000):
             app.loop()
         self.assertEqual(draw.call_count, 1)
         self.assertEqual(app.explorer.selected_id, 'task-59')
@@ -342,7 +358,7 @@ class UITests(unittest.TestCase):
         self.assertIsNone(app.status_header)
         self.assertIn('Boards', app.screen.text())
         self.assertIn('Review', app.screen.text())
-        self.assertEqual(app.screen.text().count('┌'), 1)
+        self.assertEqual(app.screen.text().count('┌'), 2)
         self.assertTrue(all(kind == 'board' for _, kind, _ in app.hits))
         row = next(y for y, _, identity in app.hits if identity == 'review')
         with patch('kanitor.ui.curses.getmouse', return_value=(0, 20, row, 0, curses.BUTTON1_PRESSED)), \
@@ -364,6 +380,7 @@ class UITests(unittest.TestCase):
 
     def test_keyboard_selects_header_and_filters_multiple_statuses(self):
         app = self.app()
+        app.handle(curses.KEY_RIGHT)  # Status after the indicator column.
         app.handle(curses.KEY_UP)
         self.assertTrue(app.task_header_selected)
         app.handle('\n')
@@ -513,7 +530,9 @@ class UITests(unittest.TestCase):
                     index = int(app.explorer.board_slug.removeprefix('board-'))
                     self.assertLessEqual(app.summary_table.starts[index], size)
                     self.assertGreater(app.summary_table.starts[index + 1], size)
-                    self.assertEqual(app.board_top, size)
+                    # A wrapped row that fits the reduced viewport is aligned
+                    # to its start so the selected row remains fully visible.
+                    self.assertEqual(app.board_top, min(size, app.summary_table.starts[index]))
                 elif view == 'tasks':
                     self.assertEqual(app.explorer.selected_id, f'task-{size}')
                     self.assertEqual(app.task_top, size)
@@ -731,3 +750,17 @@ class UITests(unittest.TestCase):
         app.screen = Screen(28, 100)
         app.draw()
         self.assertEqual(app.preview_rect[2], 8)
+
+    def test_empty_task_search_keeps_preview_and_list_geometry(self):
+        app = self.app()
+        app.draw()
+        geometry = app.preview_rect, app.task_height
+        app.explorer.search('no task can match this search')
+        app.draw()
+        self.assertIsNone(app.explorer.selected)
+        self.assertIn('No task selected.', app.screen.text())
+        self.assertEqual((app.preview_rect, app.task_height), geometry)
+        app.explorer.search('')
+        app.draw()
+        self.assertIsNotNone(app.explorer.selected)
+        self.assertEqual((app.preview_rect, app.task_height), geometry)
